@@ -1,0 +1,50 @@
+{
+  "code": 0,
+  "message": "0",
+  "ttl": 1,
+  "data": {
+    "View": {
+      "bvid": "BV1parser001",
+      "aid": 778899,
+      "title": "<em class=\"keyword\">AI</em> 实战拆解：从检索到主题聚类",
+      "desc": "这是一条用于解析测试的视频简介，包含 <em class=\"keyword\">HTML</em> 标签。",
+      "pic": "//i0.hdslb.com/detail-cover.jpg",
+      "pubdate": 1712551200,
+      "duration": 754,
+      "pages": [
+        {
+          "cid": 90001,
+          "page": 1,
+          "part": "第一部分：检索与清洗",
+          "duration": 360
+        },
+        {
+          "cid": 90002,
+          "page": 2,
+          "part": "第二部分：主题聚类",
+          "duration": 394
+        }
+      ],
+      "stat": {
+        "view": 12800,
+        "like": "2300",
+        "coin": "456",
+        "favorite": "789",
+        "share": 52,
+        "reply": 63,
+        "danmaku": 321
+      }
+    },
+    "Card": {
+      "card": {
+        "name": "测试解析 UP",
+        "mid": 424242
+      }
+    },
+    "Tags": [
+      { "tag_name": "AI" },
+      { "tag_name": "内容分析" },
+      { "tag_name": "工作流" }
+    ]
+  }
+}

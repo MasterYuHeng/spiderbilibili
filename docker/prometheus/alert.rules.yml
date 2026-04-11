@@ -1,0 +1,65 @@
+groups:
+  - name: spiderbilibili-runtime
+    rules:
+      - alert: SpiderBilibiliBackendDown
+        expr: up{job="spiderbilibili-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: spiderbilibili backend is down
+          description: Prometheus cannot scrape the backend metrics endpoint.
+
+      - alert: SpiderBilibiliDatabaseUnavailable
+        expr: spiderbilibili_component_health_status{component="database"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: PostgreSQL health check failed
+          description: The backend reported database connectivity errors.
+
+      - alert: SpiderBilibiliRedisUnavailable
+        expr: spiderbilibili_component_health_status{component="redis"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Redis health check failed
+          description: The backend reported Redis connectivity errors.
+
+      - alert: SpiderBilibiliWorkerMissing
+        expr: spiderbilibili_runtime_health{indicator="active_workers"} < spiderbilibili_runtime_health{indicator="expected_workers"}
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Celery worker heartbeat is missing
+          description: Active worker count is below the expected level.
+
+      - alert: SpiderBilibiliQueueBacklogHigh
+        expr: spiderbilibili_celery_queue_depth{queue="celery"} > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Celery queue backlog is growing
+          description: The default Celery queue has more than 20 pending jobs for 5 minutes.
+
+      - alert: SpiderBilibiliTaskFailureRatioHigh
+        expr: spiderbilibili_runtime_health{indicator="task_failure_ratio"} > 0.25
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Task failure ratio is high
+          description: More than 25% of observed terminal task outcomes are failures.
+
+      - alert: SpiderBilibiliAiFailureRatioHigh
+        expr: spiderbilibili_runtime_health{indicator="ai_failure_ratio"} > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: AI analysis failure ratio is high
+          description: More than 20% of observed AI analyses are failing.

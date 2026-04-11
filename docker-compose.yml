@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: spiderbilibili-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: spider_bilibili
+      POSTGRES_USER: spider_user
+      POSTGRES_PASSWORD: spider_pass
+      TZ: Asia/Shanghai
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spider_user -d spider_bilibili"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    container_name: spiderbilibili-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6381:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:

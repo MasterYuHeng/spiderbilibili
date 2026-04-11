@@ -1,0 +1,40 @@
+# IDE
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+
+# Backend env files
+backend/.env
+backend/.env.*
+!backend/.env.example
+docker/.env.production
+backend/data/
+backend/logs/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+frontend/.env.*.local
+
+# Logs
+*.log
+logs/
+.runtime/
+
+# OS files
+.DS_Store
+Thumbs.db
