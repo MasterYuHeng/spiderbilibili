@@ -57,6 +57,35 @@ function Get-ContainerRuntimeStatus {
   }
 }
 
+function Convert-ToProcessArgumentText {
+  param(
+    [AllowEmptyString()]
+    [string]$Argument
+  )
+
+  $value = [string]$Argument
+  if ($value.Length -eq 0) {
+    return '""'
+  }
+
+  if ($value.IndexOfAny([char[]]@(' ', "`t", '"')) -lt 0) {
+    return $value
+  }
+
+  $escaped = $value -replace '(\\*)"', '$1$1\"'
+  $escaped = $escaped -replace '(\\+)$', '$1$1'
+  return '"' + $escaped + '"'
+}
+
+function Join-ProcessArgumentList {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string[]]$ArgumentList
+  )
+
+  return (($ArgumentList | ForEach-Object { Convert-ToProcessArgumentText -Argument $_ }) -join ' ')
+}
+
 function Wait-ContainerHealthy {
   param(
     [Parameter(Mandatory = $true)]

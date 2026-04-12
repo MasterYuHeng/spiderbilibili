@@ -285,9 +285,10 @@ function Start-BackgroundProcess {
   Initialize-LogFile -Path $StdOutPath
   Initialize-LogFile -Path $StdErrPath
 
+  $normalizedArgumentList = Join-ProcessArgumentList -ArgumentList $ArgumentList
   $process = Start-Process `
     -FilePath $FilePath `
-    -ArgumentList $ArgumentList `
+    -ArgumentList $normalizedArgumentList `
     -WorkingDirectory $WorkingDirectory `
     -WindowStyle Hidden `
     -RedirectStandardOutput $StdOutPath `

@@ -214,17 +214,18 @@ function Start-LauncherProcess {
   Reset-LogFile -Path $script:launcherOutLog
   Reset-LogFile -Path $script:launcherErrLog
 
+  $launcherArguments = Join-ProcessArgumentList -ArgumentList @(
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    $script:startScriptPath,
+    "-NoMonitor"
+  )
   $script:lastLauncherExitCode = $null
   $script:launcherProcess = Start-Process `
     -FilePath "powershell.exe" `
-    -ArgumentList @(
-      "-NoProfile",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-File",
-      $script:startScriptPath,
-      "-NoMonitor"
-    ) `
+    -ArgumentList $launcherArguments `
     -WorkingDirectory $script:root `
     -WindowStyle Hidden `
     -RedirectStandardOutput $script:launcherOutLog `
@@ -256,10 +257,11 @@ function Start-StopperProcess {
     $arguments += "-CloseMonitor"
   }
 
+  $normalizedStopArguments = Join-ProcessArgumentList -ArgumentList $arguments
   $script:lastCloserExitCode = $null
   $script:stopProcess = Start-Process `
     -FilePath "powershell.exe" `
-    -ArgumentList $arguments `
+    -ArgumentList $normalizedStopArguments `
     -WorkingDirectory $script:root `
     -WindowStyle Hidden `
     -RedirectStandardOutput $script:closerOutLog `
