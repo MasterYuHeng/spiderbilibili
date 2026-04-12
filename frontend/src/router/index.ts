@@ -30,6 +30,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '回收站' },
       },
       {
+        path: 'settings/ai',
+        name: 'ai-settings',
+        component: () => import('@/views/AiSettingsView.vue'),
+        meta: { title: '系统设置' },
+      },
+      {
         path: 'tasks/:taskId',
         name: 'task-detail',
         component: () => import('@/views/TaskDetailView.vue'),

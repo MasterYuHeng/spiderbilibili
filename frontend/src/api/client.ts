@@ -48,7 +48,11 @@ function getFriendlyValidationMessage(details: unknown): string | null {
   return '请求参数校验失败，请检查输入内容。'
 }
 
-function getFriendlyServerMessage(code: unknown, message: unknown, details: unknown): string | null {
+function getFriendlyServerMessage(
+  code: unknown,
+  message: unknown,
+  details: unknown,
+): string | null {
   if (typeof code !== 'string') {
     return null
   }
@@ -115,7 +119,15 @@ export function getErrorMessage(error: unknown, fallback: string): string {
     const response = error.response?.data
     if (response && typeof response === 'object') {
       const record = response as Record<string, unknown>
-      const friendlyMessage = getFriendlyServerMessage(record.error && typeof record.error === 'object' ? (record.error as Record<string, unknown>).code : null, record.message, record.error && typeof record.error === 'object' ? (record.error as Record<string, unknown>).details : null)
+      const friendlyMessage = getFriendlyServerMessage(
+        record.error && typeof record.error === 'object'
+          ? (record.error as Record<string, unknown>).code
+          : null,
+        record.message,
+        record.error && typeof record.error === 'object'
+          ? (record.error as Record<string, unknown>).details
+          : null,
+      )
       if (friendlyMessage) {
         return friendlyMessage
       }

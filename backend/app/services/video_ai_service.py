@@ -95,7 +95,10 @@ class VideoAiService:
     ) -> None:
         self.session = session
         self.settings = get_settings()
-        self.ai_client = ai_client or OpenAICompatibleAiClient.from_settings()
+        self.ai_client = ai_client or OpenAICompatibleAiClient.from_runtime(
+            session=self.session,
+            settings=self.settings,
+        )
         self.logger = get_logger(__name__)
 
     def analyze_task(

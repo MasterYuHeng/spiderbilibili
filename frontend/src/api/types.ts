@@ -11,6 +11,67 @@ export interface ApiResponse<T> {
   request_id: string | null;
 }
 
+export type AiKeySource = 'runtime' | 'environment' | 'unset';
+
+export interface DeepSeekConfig {
+  provider: 'deepseek';
+  effective_provider: string;
+  api_key: string;
+  api_key_configured: boolean;
+  key_source: AiKeySource;
+  base_url: string;
+  model: string;
+  fallback_model: string | null;
+  timeout_seconds: number;
+  max_retries: number;
+  updated_at: string | null;
+}
+
+export interface BilibiliAccountProfile {
+  is_login: boolean;
+  mid: string | null;
+  username: string | null;
+  level: number | null;
+  avatar_url: string | null;
+}
+
+export interface BrowserProfile {
+  id: string;
+  label: string;
+  directory_name: string;
+  cookie_db_exists: boolean;
+}
+
+export interface BrowserSource {
+  browser: string;
+  label: string;
+  user_data_dir: string;
+  default_profile_id: string | null;
+  profiles: BrowserProfile[];
+}
+
+export interface BilibiliConfig {
+  provider: 'bilibili';
+  cookie: string;
+  cookie_configured: boolean;
+  key_source: AiKeySource;
+  sessdata: string;
+  bili_jct: string;
+  dede_user_id: string;
+  buvid3: string;
+  buvid4: string;
+  account_profile: BilibiliAccountProfile | null;
+  import_summary: string | null;
+  validation_message: string | null;
+  browser_sources: BrowserSource[];
+  updated_at: string | null;
+}
+
+export interface AiSettingsPayload {
+  deepseek: DeepSeekConfig;
+  bilibili: BilibiliConfig;
+}
+
 export type TaskStatus =
   | 'pending'
   | 'queued'

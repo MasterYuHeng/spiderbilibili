@@ -5,6 +5,17 @@ from app.schemas.common import (
     HealthPayload,
     MessagePayload,
 )
+from app.schemas.system import (
+    AiSettingsPayload,
+    BilibiliAccountProfileRead,
+    BilibiliBrowserImportRequest,
+    BilibiliConfigRead,
+    BilibiliConfigUpdateRequest,
+    BrowserProfileRead,
+    BrowserSourceRead,
+    DeepSeekConfigRead,
+    DeepSeekConfigUpdateRequest,
+)
 from app.schemas.task import (
     TaskCreatePayload,
     TaskCreateRequest,
@@ -19,7 +30,16 @@ from app.schemas.task import (
 __all__ = [
     "ApiErrorPayload",
     "ApiResponse",
+    "AiSettingsPayload",
+    "BilibiliAccountProfileRead",
+    "BilibiliBrowserImportRequest",
+    "BilibiliConfigRead",
+    "BilibiliConfigUpdateRequest",
+    "BrowserProfileRead",
+    "BrowserSourceRead",
     "ComponentHealth",
+    "DeepSeekConfigRead",
+    "DeepSeekConfigUpdateRequest",
     "HealthPayload",
     "MessagePayload",
     "TaskCreatePayload",

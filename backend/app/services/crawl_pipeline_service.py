@@ -21,7 +21,11 @@ from app.crawler.subtitle_spider import BilibiliSubtitleSpider
 from app.models.base import utc_now
 from app.models.enums import LogLevel, TaskStage
 from app.models.task import CrawlTask
-from app.services.system_config_service import get_system_config_value
+from app.core.config import get_settings
+from app.services.system_config_service import (
+    build_bilibili_runtime_settings,
+    get_system_config_value,
+)
 from app.services.task_log_service import create_task_log
 from app.services.task_service import assert_task_execution_allowed
 from app.services.video_score_service import VideoScoreService
@@ -84,13 +88,23 @@ class CrawlPipelineService:
         self.raw_archive = raw_archive
 
         if self.http_client is None:
+            runtime_settings = build_bilibili_runtime_settings(
+                self.session,
+                get_settings(),
+            )
             self.http_client = BilibiliHttpClient(
+                settings=runtime_settings,
                 min_sleep_seconds=float(task.min_sleep_seconds),
                 max_sleep_seconds=float(task.max_sleep_seconds),
                 use_proxy=task.enable_proxy,
             )
         if self.browser_client is None:
+            runtime_settings = build_bilibili_runtime_settings(
+                self.session,
+                get_settings(),
+            )
             self.browser_client = BilibiliBrowserClient(
+                settings=runtime_settings,
                 use_proxy=task.enable_proxy,
             )
         if self.search_spider is None:

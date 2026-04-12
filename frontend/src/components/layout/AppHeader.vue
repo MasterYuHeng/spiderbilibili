@@ -27,8 +27,10 @@ const props = defineProps<{
 
 const route = useRoute()
 
-const pageTitle = computed(() => (route.meta.title as string | undefined) ?? '内容洞察控制台')
+const pageTitle = computed(() => (route.meta.title as string | undefined) ?? '内容工作台')
 const taskTitle = computed(() =>
-  props.currentTaskId ? props.currentTaskLabel || `任务 ${props.currentTaskId.slice(0, 8)}` : '暂未选择任务',
+  props.currentTaskId
+    ? props.currentTaskLabel || `任务 ${props.currentTaskId.slice(0, 8)}`
+    : '暂未选择任务',
 )
 </script>

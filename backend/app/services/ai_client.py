@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 import httpx
+from sqlalchemy.orm import Session
 from openai import (
     APIConnectionError,
     APIError,
@@ -24,6 +25,7 @@ from app.core.config import get_settings
 from app.core.exceptions import ServiceUnavailableError
 from app.core.logging import get_logger
 from app.schemas.analysis import VideoAiSummaryDraft
+from app.services.system_config_service import resolve_ai_client_settings
 
 JSON_BLOCK_PATTERN = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 
@@ -102,15 +104,25 @@ class OpenAICompatibleAiClient:
 
     @classmethod
     def from_settings(cls) -> OpenAICompatibleAiClient:
-        settings = get_settings()
+        return cls.from_runtime(session=None)
+
+    @classmethod
+    def from_runtime(
+        cls,
+        *,
+        session: Session | None,
+        settings: Any | None = None,
+    ) -> OpenAICompatibleAiClient:
+        resolved_settings = settings or get_settings()
+        config = resolve_ai_client_settings(session, resolved_settings)
         return cls(
-            provider_name=settings.normalized_ai_provider,
-            api_key=settings.resolved_ai_api_key,
-            base_url=settings.resolved_ai_base_url,
-            default_model=settings.resolved_ai_model,
-            fallback_model=settings.resolved_ai_fallback_model,
-            timeout_seconds=settings.resolved_ai_timeout_seconds,
-            max_retries=settings.resolved_ai_max_retries,
+            provider_name=config["provider_name"],
+            api_key=config["api_key"],
+            base_url=config["base_url"],
+            default_model=config["default_model"],
+            fallback_model=config["fallback_model"],
+            timeout_seconds=config["timeout_seconds"],
+            max_retries=config["max_retries"],
         )
 
     def is_available(self) -> bool:

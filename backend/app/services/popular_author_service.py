@@ -13,9 +13,11 @@ from app.crawler.browser_client import BilibiliBrowserClient
 from app.crawler.client import BilibiliHttpClient
 from app.crawler.detail_spider import BilibiliDetailSpider
 from app.crawler.uploader_spider import BilibiliUploaderSpider
+from app.core.config import get_settings
 from app.models.base import utc_now
 from app.models.task import CrawlTask
 from app.services.ai_client import AiPromptBundle, OpenAICompatibleAiClient
+from app.services.system_config_service import build_bilibili_runtime_settings
 from app.schemas.task import (
     TaskAnalysisAuthorRepresentativeVideoRead,
     TaskAnalysisAuthorVideoRead,
@@ -75,7 +77,9 @@ class PopularAuthorAnalysisService:
         self.browser_client = browser_client
         self.uploader_spider = uploader_spider
         self.detail_spider = detail_spider
-        self.ai_client = ai_client or OpenAICompatibleAiClient.from_settings()
+        self.ai_client = ai_client or OpenAICompatibleAiClient.from_runtime(
+            session=self.session,
+        )
 
     def close(self) -> None:
         if self._owns_http_client and self.http_client is not None:
@@ -363,7 +367,19 @@ class PopularAuthorAnalysisService:
             return []
 
         if self.http_client is None:
-            self.http_client = BilibiliHttpClient()
+            self.http_client = BilibiliHttpClient(
+                settings=build_bilibili_runtime_settings(
+                    self.session,
+                    get_settings(),
+                )
+            )
+        if self.browser_client is None:
+            self.browser_client = BilibiliBrowserClient(
+                settings=build_bilibili_runtime_settings(
+                    self.session,
+                    get_settings(),
+                )
+            )
         if self.uploader_spider is None:
             self.uploader_spider = BilibiliUploaderSpider(
                 self.http_client,

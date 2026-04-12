@@ -2,7 +2,7 @@
   <aside class="sidebar">
     <div class="sidebar__brand">
       <p class="sidebar__eyebrow">Bilibili Hot Search</p>
-      <h1>B 站热点搜索</h1>
+      <h1>B站热点搜索</h1>
     </div>
 
     <nav class="sidebar__nav">
@@ -51,10 +51,13 @@ const primaryItems = [
   { to: '/tasks/create', label: '创建任务' },
   { to: '/tasks', label: '任务列表' },
   { to: '/tasks/trash', label: '回收站' },
+  { to: '/settings/ai', label: '系统设置' },
 ]
 
 const taskTitle = computed(() =>
-  props.currentTaskId ? props.currentTaskLabel || `任务 ${props.currentTaskId.slice(0, 8)}` : '暂未选择任务',
+  props.currentTaskId
+    ? props.currentTaskLabel || `任务 ${props.currentTaskId.slice(0, 8)}`
+    : '暂未选择任务',
 )
 
 const taskItems = computed(() => {

@@ -9,13 +9,19 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.db.base import Base
 from app.models.analysis import SystemConfig
 from app.services.system_config_service import (
+    build_bilibili_runtime_settings,
     get_ai_batch_defaults,
     get_ai_quality_control_defaults,
-    get_ai_summary_defaults,
+    get_ai_runtime_overrides,
     get_statistics_defaults,
     get_system_config_value,
     get_task_creation_defaults,
     get_topic_clustering_defaults,
+    get_ai_summary_defaults,
+    resolve_ai_client_settings,
+    resolve_bilibili_auth_settings,
+    update_bilibili_runtime_auth_config,
+    update_deepseek_runtime_config,
 )
 
 
@@ -29,14 +35,40 @@ def build_session() -> Session:
 def build_settings() -> SimpleNamespace:
     return SimpleNamespace(
         ai_provider="openai",
+        ai_api_key="",
+        ai_base_url="",
         ai_model="",
         ai_fallback_model="",
+        ai_timeout_seconds=None,
+        ai_max_retries=None,
         crawler_max_videos=80,
         crawler_max_pages=8,
         crawler_min_sleep=0.5,
         crawler_max_sleep=3.5,
+        deepseek_api_key="",
+        deepseek_base_url="https://api.deepseek.com",
+        deepseek_model="deepseek-chat",
+        deepseek_fallback_model="",
         openai_model="gpt-5.4-mini",
+        openai_api_key="openai-env-key",
+        openai_base_url="https://api.openai.com/v1",
         openai_fallback_model="gpt-4.1-mini",
+        openai_timeout_seconds=None,
+        openai_max_retries=None,
+        normalized_ai_provider="openai",
+        bilibili_cookie="SESSDATA=env-sess; bili_jct=env-jct; DedeUserID=10001",
+        bilibili_sessdata="",
+        bilibili_bili_jct="",
+        bilibili_dedeuserid="",
+        bilibili_buvid3="",
+        bilibili_buvid4="",
+        bilibili_user_agent="Mozilla/5.0 test",
+        http_timeout_seconds=20.0,
+        http_max_retries=3,
+        https_proxy="",
+        http_proxy="",
+        playwright_timeout_seconds=30.0,
+        playwright_headless=True,
     )
 
 
@@ -194,3 +226,72 @@ def test_ai_summary_defaults_allow_environment_override_to_switch_provider() -> 
     assert defaults["model"] == "deepseek-chat"
     assert defaults["fallback_model"] is None
     assert defaults["topic_count"] == 4
+
+
+def test_update_deepseek_runtime_config_persists_frontend_managed_key() -> None:
+    with build_session() as session:
+        record = update_deepseek_runtime_config(session, api_key="deepseek-runtime-key")
+        session.commit()
+        stored = get_ai_runtime_overrides(session)
+
+    assert record.config_key == "ai.runtime_overrides"
+    assert stored == {
+        "provider": "deepseek",
+        "api_key": "deepseek-runtime-key",
+    }
+
+
+def test_resolve_ai_client_settings_prefers_runtime_deepseek_key() -> None:
+    with build_session() as session:
+        update_deepseek_runtime_config(session, api_key="deepseek-runtime-key")
+        session.commit()
+        settings = build_settings()
+        resolved = resolve_ai_client_settings(session, settings)
+
+    assert resolved["provider_name"] == "deepseek"
+    assert resolved["api_key"] == "deepseek-runtime-key"
+    assert resolved["base_url"] == "https://api.deepseek.com"
+    assert resolved["default_model"] == "deepseek-chat"
+    assert resolved["key_source"] == "runtime"
+
+
+def test_update_bilibili_runtime_config_parses_cookie_and_stores_account_profile() -> None:
+    with build_session() as session:
+        update_bilibili_runtime_auth_config(
+            session,
+            cookie="SESSDATA=runtime-sess; bili_jct=runtime-jct; DedeUserID=2233; buvid3=aaa",
+            account_profile={"is_login": True, "mid": "2233", "username": "测试账号"},
+            import_source={"label": "Microsoft Edge / Default"},
+            validation_message=None,
+        )
+        session.commit()
+        resolved = resolve_bilibili_auth_settings(session, build_settings())
+
+    assert resolved["key_source"] == "runtime"
+    assert resolved["cookie"] == "SESSDATA=runtime-sess; bili_jct=runtime-jct; DedeUserID=2233; buvid3=aaa"
+    assert resolved["bilibili_sessdata"] == "runtime-sess"
+    assert resolved["bilibili_bili_jct"] == "runtime-jct"
+    assert resolved["bilibili_dedeuserid"] == "2233"
+    assert resolved["account_profile"] == {
+        "is_login": True,
+        "mid": "2233",
+        "username": "测试账号",
+    }
+
+
+def test_build_bilibili_runtime_settings_overrides_environment_values() -> None:
+    with build_session() as session:
+        update_bilibili_runtime_auth_config(
+            session,
+            cookie="SESSDATA=runtime-sess; bili_jct=runtime-jct; DedeUserID=2233",
+            account_profile=None,
+            import_source=None,
+            validation_message="",
+        )
+        session.commit()
+        runtime_settings = build_bilibili_runtime_settings(session, build_settings())
+
+    assert runtime_settings.bilibili_cookie == "SESSDATA=runtime-sess; bili_jct=runtime-jct; DedeUserID=2233"
+    assert runtime_settings.bilibili_sessdata == "runtime-sess"
+    assert runtime_settings.bilibili_bili_jct == "runtime-jct"
+    assert runtime_settings.bilibili_dedeuserid == "2233"

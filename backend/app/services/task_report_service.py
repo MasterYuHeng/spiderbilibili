@@ -55,7 +55,9 @@ class TaskReportService:
         ai_client: OpenAICompatibleAiClient | Any | None = None,
     ) -> None:
         self.session = session
-        self.ai_client = ai_client or OpenAICompatibleAiClient.from_settings()
+        self.ai_client = ai_client or OpenAICompatibleAiClient.from_runtime(
+            session=self.session,
+        )
 
     def build_report(self, task_id: str) -> TaskReportPayload:
         task = get_task_or_raise(self.session, task_id)
