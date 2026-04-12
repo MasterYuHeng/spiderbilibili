@@ -19,6 +19,7 @@ $script:startScriptPath = Join-Path $PSScriptRoot "start-dev.ps1"
 $script:stopScriptPath = Join-Path $PSScriptRoot "stop-dev.ps1"
 $script:frontendUrl = "http://127.0.0.1:5174"
 $script:backendUrl = "http://127.0.0.1:8014"
+$script:backendHealthUrl = "$script:backendUrl/api/health"
 $script:launcherOutLog = Join-Path $script:logDir "launcher.out.log"
 $script:launcherErrLog = Join-Path $script:logDir "launcher.err.log"
 $script:closerOutLog = Join-Path $script:logDir "closer.out.log"
@@ -153,7 +154,7 @@ function Get-ProcessRuntimeStatus {
   }
 
   $role = [string]$Record.role
-  if ($role -eq "backend" -and (Test-HttpReady -Url $script:backendUrl)) {
+  if ($role -eq "backend" -and (Test-HttpReady -Url $script:backendHealthUrl)) {
     return "ready"
   }
   if ($role -eq "frontend" -and (Test-HttpReady -Url $script:frontendUrl)) {

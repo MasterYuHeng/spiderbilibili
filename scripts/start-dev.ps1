@@ -9,6 +9,7 @@ $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $backend = Join-Path $root "backend"
 $frontend = Join-Path $root "frontend"
+$venvDir = Join-Path $root ".venv"
 $python = Join-Path $root ".venv\Scripts\python.exe"
 $celery = Join-Path $root ".venv\Scripts\celery.exe"
 $backendStartScript = Join-Path $PSScriptRoot "start-backend.ps1"
@@ -29,6 +30,7 @@ else {
 $launchSessionId = Get-Date -Format "yyyyMMdd-HHmmss"
 $frontendUrl = "http://127.0.0.1:5174"
 $backendUrl = "http://127.0.0.1:8014"
+$backendHealthUrl = "$backendUrl/api/health"
 
 function Write-LauncherStep {
   param(
@@ -78,8 +80,35 @@ function Ensure-BackendEnvFile {
   Copy-Item -Path $backendEnvExample -Destination $backendEnv
 }
 
+function Test-VirtualEnvironmentHealthy {
+  if (-not (Test-Path $python)) {
+    return $false
+  }
+
+  try {
+    & $python -c "import sys" 2>$null
+    return $LASTEXITCODE -eq 0
+  }
+  catch {
+    return $false
+  }
+}
+
+function Remove-InvalidVirtualEnvironment {
+  if (-not (Test-Path $venvDir)) {
+    return
+  }
+
+  Write-LauncherStep "Detected an invalid local virtual environment, rebuilding .venv"
+  Remove-Item -LiteralPath $venvDir -Recurse -Force -ErrorAction Stop
+}
+
 function Ensure-BackendRuntime {
-  if ((Test-Path $python) -and (Test-Path $celery)) {
+  if ((Test-Path $venvDir) -and (-not (Test-VirtualEnvironmentHealthy))) {
+    Remove-InvalidVirtualEnvironment
+  }
+
+  if ((Test-Path $python) -and (Test-Path $celery) -and (Test-VirtualEnvironmentHealthy)) {
     return
   }
 
@@ -89,11 +118,15 @@ function Ensure-BackendRuntime {
 
   if (-not (Test-Path $python)) {
     Write-LauncherStep "Creating local virtual environment in .venv"
-    & $hostPythonCommand @hostPythonArgs -m venv (Join-Path $root ".venv")
+    & $hostPythonCommand @hostPythonArgs -m venv $venvDir
   }
 
   if (-not (Test-Path $python)) {
     throw "Backend Python interpreter was not found after creating the virtual environment: $python"
+  }
+
+  if (-not (Test-VirtualEnvironmentHealthy)) {
+    throw "The local virtual environment was created, but its Python interpreter is unavailable: $python"
   }
 
   Write-LauncherStep "Installing backend dependencies"
@@ -367,7 +400,7 @@ function Wait-HttpReady {
 
 function Get-BackendHealthSnapshot {
   param(
-    [string]$Url = "$backendUrl/api/health"
+    [string]$Url = $backendHealthUrl
   )
 
   try {
@@ -587,7 +620,7 @@ $backendProcess = Start-BackgroundProcess `
   -WorkingDirectory $root `
   -StdOutPath (New-LogFilePath -Role "backend" -Stream "out") `
   -StdErrPath (New-LogFilePath -Role "backend" -Stream "err") `
-  -ProbeUrl $backendUrl
+  -ProbeUrl $backendHealthUrl
 
 $workerProcess = Start-BackgroundProcess `
   -Role "worker" `
