@@ -1,145 +1,288 @@
-# spiderbilibili
+# SpiderBilibili
 
-B站关键词视频采集与分析平台。
+一个面向中文内容研究场景的 Bilibili 关键词采集与分析平台，提供任务创建、视频结果分析、主题分析、UP 主分析、任务报告、上线验收和本地一键启动能力。
 
-## 项目概览
+项目已经整理为适合公开使用的仓库形态，默认不包含任何私密配置。你可以直接克隆后按本文档完成本地开发或 Docker 部署。
 
-项目围绕“按关键词采集 B 站视频并进行后续分析”展开，核心能力包括：
+## 功能概览
 
-- 搜索并采集视频基础信息、详情、字幕和文本内容
-- 基于相关性与热度对候选视频进行综合评分
-- 使用 AI 生成摘要、提取主题并做聚类分析
-- 通过前后端页面查看任务、视频结果、主题分析和上线前验收报告
+- 关键词任务创建与抓取范围配置
+- Bilibili 搜索结果采集与原始数据落库
+- AI 摘要、主题聚类、热度分析和任务报告生成
+- 热门 UP 主工作台与内容分析
+- 运行时配置 DeepSeek API Key 和 Bilibili 登录态
+- Windows 一键启动器与后台监控面板
+- Docker 化基础设施和整套容器部署
 
 ## 技术栈
 
-- 前端：Vue 3、TypeScript、Vite、Pinia、Vue Router、Element Plus、ECharts
-- 后端：Python 3.11、FastAPI、SQLAlchemy 2.x、Pydantic、Alembic
-- 采集链路：httpx、Playwright、selectolax、tenacity
-- 任务系统：Celery、Redis
-- 数据存储：PostgreSQL
+- 前端：Vue 3、TypeScript、Vite、Pinia、Element Plus、ECharts
+- 后端：FastAPI、SQLAlchemy、Alembic、Celery、Redis、PostgreSQL
+- 采集：httpx、Playwright、selectolax
+- AI 与分析：OpenAI 兼容 SDK、jieba、pandas、scikit-learn
 
-## 目录结构
+## 仓库结构
 
 ```text
 spiderbilibili/
-├─ backend/               # FastAPI、Celery、采集与分析逻辑
-├─ docker/                # 生产部署相关配置
-├─ docs/                  # 方案、阶段说明与验收文档
-├─ frontend/              # Vue 3 前端
-├─ scripts/               # 本地开发与运维脚本
-├─ docker-compose.yml     # 本地开发基础设施
-└─ docker-compose.prod.yml
+├─ backend/                 后端服务、数据库迁移、业务逻辑
+├─ frontend/                前端界面
+├─ scripts/                 启动器、关闭器和开发脚本
+├─ docker/                  Nginx、Prometheus、Grafana 等容器配置
+├─ docs/                    面向使用者的补充文档
+├─ docker-compose.yml       本地开发基础设施
+├─ docker-compose.prod.yml  整套 Docker 部署
+├─ launch-dev.bat           Windows 一键启动
+└─ close-dev.bat            Windows 一键关闭
 ```
 
-## 快速开始
+## 推荐使用方式
 
-### 1. 启动基础设施
+### 方式一：Windows 一键启动
+
+适合第一次使用本项目，也是当前最省心的方式。启动器会自动完成下面这些事情：
+
+- 检查并创建 `backend/.env`
+- 自动创建 `.venv`
+- 自动安装后端依赖
+- 自动安装 Playwright Chromium 运行时
+- 自动安装前端依赖
+- 启动 PostgreSQL 和 Redis 容器
+- 启动后端、Celery Worker、前端
+- 打开浏览器并显示后台监控面板
+
+使用前请先安装：
+
+- Python 3.11
+- Node.js 20 LTS 或更高版本
+- Docker Desktop
+
+启动步骤：
 
 ```powershell
-.\scripts\start-infra.ps1
+git clone <your-repo-url>
+cd spiderbilibili
+.\launch-dev.bat
 ```
 
-### 2. 启动后端 API
+关闭开发环境：
 
 ```powershell
+.\close-dev.bat
+```
+
+启动成功后默认地址：
+
+- 前端：`http://127.0.0.1:5174`
+- 后端：`http://127.0.0.1:8014/api`
+
+首次启动可能会比后续启动更慢一些，因为启动器会自动准备 Python 依赖、前端依赖和 Playwright 浏览器运行时。
+
+### 方式二：手动本地开发
+
+适合需要单独调试前后端或自定义环境的用户。完整步骤见：
+
+- [本地开发与环境配置](./docs/LOCAL_SETUP.md)
+
+### 方式三：Docker 整套部署
+
+适合想直接使用整套容器运行前端、后端、Worker、数据库和监控组件的用户。完整步骤见：
+
+- [Docker 部署指南](./docs/DOCKER_SETUP.md)
+
+## 快速配置
+
+### 1. 配置 DeepSeek API Key
+
+项目支持两种方式：
+
+- 推荐：启动前端后，进入左侧 `系统设置`
+- 可选：直接在 `backend/.env` 中配置
+
+前端页面支持查看、保存、修改和清空运行时 API Key，适合开箱即用。
+
+### 2. 配置 Bilibili 登录态
+
+项目同样支持两种方式：
+
+- 推荐：在 `系统设置` 页面使用“一键读取”导入本机浏览器中的 Bilibili 登录态
+- 可选：手动粘贴完整 Cookie
+
+如果你需要更稳定的采集结果，建议使用登录态运行任务。
+
+### 3. 浏览器与账号倾向问题
+
+项目已经提供独立的 Bilibili 登录配置入口，但搜索结果仍可能受到平台侧内容分发策略影响。为了尽量减小干扰，建议：
+
+- 使用专门的 Bilibili 账号执行采集
+- 避免在该账号下进行大量个性化观看操作
+- 定期更新登录态
+
+## 环境要求
+
+### 本地开发
+
+- Git
+- Python 3.11
+- Node.js 20 LTS 或更高
+- npm 10+
+- Docker Desktop
+
+### Docker 部署
+
+- Docker Engine 24+
+- Docker Compose v2
+
+## 本地开发默认端口
+
+- `5174`：前端开发服务器
+- `8014`：后端 API
+- `5434`：PostgreSQL
+- `6381`：Redis
+- `4174`：前端预览端口
+
+## 配置文件说明
+
+### 后端
+
+首次使用时，启动器会自动从 `backend/.env.example` 复制出 `backend/.env`。
+
+常用项：
+
+- `DATABASE_URL`
+- `REDIS_URL`
+- `CELERY_BROKER_URL`
+- `CELERY_RESULT_BACKEND`
+- `AI_PROVIDER`
+- `DEEPSEEK_API_KEY`
+- `BILIBILI_COOKIE`
+
+### 前端
+
+前端开发环境默认通过 `/api` 访问后端，并在本地开发时自动代理到 `http://127.0.0.1:8014`。通常不需要额外配置。
+
+如果你要连接远程后端，可新建 `frontend/.env`：
+
+```env
+VITE_API_BASE_URL=http://127.0.0.1:8014
+```
+
+### Docker 部署
+
+整套 Docker 部署建议复制：
+
+```powershell
+Copy-Item docker/.env.production.example docker/.env.production
+```
+
+然后按实际情况修改域名、端口、数据库密码和 AI Key。
+
+## 常用命令
+
+### 基础设施
+
+```powershell
+docker compose up -d
+docker compose down
+```
+
+### 后端
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+.\.venv\Scripts\python.exe -m playwright install
+.\.venv\Scripts\python.exe -m alembic upgrade head
 .\scripts\start-backend.ps1
 ```
 
-### 3. 启动 Worker
+### Worker
 
 ```powershell
 .\scripts\start-worker.ps1
 ```
 
-### 4. 启动前端
-
-```powershell
-.\scripts\start-frontend.ps1
-```
-
-### 5. 一键启动本地开发环境
-
-```powershell
-.\scripts\start-dev.ps1
-```
-
-默认端口：
-
-- PostgreSQL：`5434`
-- Redis：`6381`
-- FastAPI：`8014`
-- Vite：`5174`
-
-## 常用命令
-
-### 后端依赖与测试
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
-.\.venv\Scripts\python.exe -m pip install -r backend\requirements-dev.txt
-.\.venv\Scripts\python.exe -m pytest backend\tests -q
-.\.venv\Scripts\python.exe -m ruff check backend\app backend\tests
-```
-
-### 前端依赖与构建
+### 前端
 
 ```powershell
 cd frontend
 npm install
-npm run lint
-npm run test
-npm run build
+npm run dev
 ```
 
-## B站登录态
+## Docker 快速开始
 
-如果需要抓取 `need_login_subtitle: true` 的字幕，请为后端和 Worker 配置 B 站登录态后再重启服务。
-
-推荐直接配置完整 Cookie：
+### 仅启动数据库和 Redis
 
 ```powershell
-$env:BILIBILI_COOKIE="SESSDATA=你的SESSDATA; bili_jct=你的bili_jct; DedeUserID=你的DedeUserID; buvid3=你的buvid3"
+docker compose up -d
 ```
 
-也可以拆分配置：
+### 启动整套服务
 
 ```powershell
-$env:BILIBILI_SESSDATA="你的SESSDATA"
-$env:BILIBILI_BILI_JCT="你的bili_jct"
-$env:BILIBILI_DEDEUSERID="你的DedeUserID"
-$env:BILIBILI_BUVID3="你的buvid3"
-$env:BILIBILI_BUVID4="你的buvid4"
+Copy-Item docker/.env.production.example docker/.env.production
+docker compose --env-file docker/.env.production -f docker-compose.prod.yml up -d --build
 ```
 
-配置完成后重启：
+默认会启动：
+
+- PostgreSQL
+- Redis
+- Backend
+- Celery Worker
+- Nginx
+- Prometheus
+- Alertmanager
+- Grafana
+
+## 常见问题
+
+### 1. 启动器提示缺少 Python、npm 或 Docker
+
+请先安装对应软件，并确认命令可在 PowerShell 中直接执行：
 
 ```powershell
-.\scripts\start-backend.ps1
-.\scripts\start-worker.ps1
+python --version
+npm --version
+docker --version
+docker compose version
 ```
 
-## 生产部署
+### 2. 前端打开了但无法访问接口
 
-```bash
-cp docker/.env.production.example docker/.env.production
-docker compose --env-file docker/.env.production -f docker-compose.prod.yml build
-docker compose --env-file docker/.env.production -f docker-compose.prod.yml up -d
-```
+优先检查：
 
-## 运维脚本
+- 后端是否已经启动
+- `http://127.0.0.1:8014/api/health` 是否可访问
+- 端口 `8014` 是否被占用
 
-- 健康检查：`.\.venv\Scripts\python.exe .\scripts\check-health.py --include-metrics`
-- 重试任务：`.\.venv\Scripts\python.exe .\scripts\retry-task.py --task-id <task-id>`
-- 导出任务数据：`.\.venv\Scripts\python.exe .\scripts\export-task-data.py --task-id <task-id> --dataset videos --format csv --output .\exports\task.csv`
-- 清理日志：`.\.venv\Scripts\python.exe .\scripts\cleanup-logs.py --dry-run`
-- Stage 15 验收：`.\.venv\Scripts\python.exe .\scripts\run-stage15-acceptance.py`
+### 3. 任务一直排队或提示没有 Worker 处理
 
-## 文档入口
+优先检查：
 
-- `docs/项目PRD与技术方案.md`
-- `docs/环境搭建与配置说明.md`
-- `docs/从零到一完整开发实施计划.md`
-- `docs/阶段13-部署与发布说明.md`
-- `docs/阶段14-运维与可观测性说明.md`
-- `docs/阶段15-上线前验收说明.md`
+- Redis 容器是否正常
+- Worker 进程是否在运行
+- 后端健康检查中的 `worker` 状态是否为 `ok`
+
+### 4. 一键读取 Bilibili 登录态失败
+
+优先检查：
+
+- 当前 Windows 账号是否能访问浏览器用户目录
+- Edge 或 Chrome 中是否已经登录 Bilibili
+- 是否被安全软件拦截
+
+必要时可以退回到手动粘贴 Cookie。
+
+## 面向开源使用的说明
+
+- 仓库中不包含任何真实 API Key、Cookie、数据库密码或个人数据
+- `backend/.env`、`frontend/.env`、`docker/.env.production`、`.runtime/`、`backend/data/`、`backend/logs/` 均已加入忽略规则
+- Windows 启动器保留可用，适合作为默认体验入口
+- 如果你准备公开发布到 GitHub，建议在发布前补充你自己的 `LICENSE`
+
+## 补充文档
+
+- [本地开发与环境配置](./docs/LOCAL_SETUP.md)
+- [Docker 部署指南](./docs/DOCKER_SETUP.md)

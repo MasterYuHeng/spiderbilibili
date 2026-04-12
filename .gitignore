@@ -27,8 +27,16 @@ backend/logs/
 # Frontend
 frontend/node_modules/
 frontend/dist/
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
 frontend/.env.local
 frontend/.env.*.local
+
+# Docker env files
+docker/.env
+docker/.env.*
+!docker/.env.production.example
 
 # Logs
 *.log

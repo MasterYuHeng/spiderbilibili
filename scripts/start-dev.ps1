@@ -20,6 +20,12 @@ $frontendNodeModules = Join-Path $frontend "node_modules"
 $runtimeDir = Join-Path $root ".runtime"
 $logDir = Join-Path $runtimeDir "logs"
 $devProcessStateFile = Join-Path $runtimeDir "dev-processes.json"
+$playwrightBrowserRoot = if ($env:PLAYWRIGHT_BROWSERS_PATH) {
+  $env:PLAYWRIGHT_BROWSERS_PATH
+}
+else {
+  Join-Path $env:LOCALAPPDATA "ms-playwright"
+}
 $launchSessionId = Get-Date -Format "yyyyMMdd-HHmmss"
 $frontendUrl = "http://127.0.0.1:5174"
 $backendUrl = "http://127.0.0.1:8014"
@@ -97,6 +103,30 @@ function Ensure-BackendRuntime {
   if (-not (Test-Path $celery)) {
     throw "Celery executable was not found after installing backend dependencies: $celery"
   }
+}
+
+function Test-PlaywrightChromiumInstalled {
+  if (-not (Test-Path $playwrightBrowserRoot)) {
+    return $false
+  }
+
+  $chromiumDirectories = @(
+    Get-ChildItem -Path $playwrightBrowserRoot -Directory -Filter "chromium-*" -ErrorAction SilentlyContinue
+  )
+  return $chromiumDirectories.Count -gt 0
+}
+
+function Ensure-PlaywrightRuntime {
+  if (-not (Test-Path $python)) {
+    throw "Backend Python interpreter was not found before installing Playwright: $python"
+  }
+
+  if (Test-PlaywrightChromiumInstalled) {
+    return
+  }
+
+  Write-LauncherStep "Installing Playwright Chromium runtime for the crawler"
+  & $python -m playwright install chromium
 }
 
 function Ensure-FrontendDependencies {
@@ -537,6 +567,7 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
 
 Ensure-BackendEnvFile
 Ensure-BackendRuntime
+Ensure-PlaywrightRuntime
 Ensure-FrontendDependencies
 Ensure-RuntimeDirectory
 Stop-LingeringDevProcesses
