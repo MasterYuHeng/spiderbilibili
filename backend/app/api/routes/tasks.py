@@ -12,6 +12,7 @@ from app.schemas.task import (
     TaskAcceptancePayload,
     TaskAcceptanceSectionRead,
     TaskAnalysisPayload,
+    TaskAnalysisWeightsUpdateRequest,
     TaskBulkDeletePayload,
     TaskCreatePayload,
     TaskCreateRequest,
@@ -24,6 +25,7 @@ from app.schemas.task import (
     TaskTopicListPayload,
     TaskVideoListPayload,
 )
+from app.services.task_analysis_service import update_task_analysis_weights
 from app.services.task_acceptance_service import TaskAcceptanceService
 from app.services.task_export_service import TaskExportService
 from app.services.task_report_service import TaskReportService
@@ -467,6 +469,22 @@ def get_task_analysis_endpoint(
     payload = get_task_analysis(session, task_id)
     request_id = getattr(request.state, "request_id", None)
     return success_response(payload, request_id=request_id)
+
+
+@router.post(
+    "/{task_id}/analysis/weights",
+    response_model=ApiResponse[TaskAnalysisPayload],
+    summary="Update task analysis metric weights and regenerate analysis/report snapshots",
+)
+def update_task_analysis_weights_endpoint(
+    task_id: str,
+    payload: TaskAnalysisWeightsUpdateRequest,
+    request: Request,
+    session: DbSession,
+) -> ApiResponse[TaskAnalysisPayload]:
+    response_payload = update_task_analysis_weights(session, task_id, payload)
+    request_id = getattr(request.state, "request_id", None)
+    return success_response(response_payload, request_id=request_id)
 
 
 @router.get(

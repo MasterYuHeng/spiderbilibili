@@ -128,6 +128,10 @@ class TaskVideo(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "search_rank",
         ),
         Index("ix_task_video_task_id_heat_score", "task_id", "heat_score"),
+        Index(
+            "ix_task_video_primary_matched_keyword",
+            "primary_matched_keyword",
+        ),
     )
 
     task_id: Mapped[str] = mapped_column(
@@ -141,6 +145,17 @@ class TaskVideo(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
     )
     search_rank: Mapped[int | None] = mapped_column(Integer)
+    matched_keywords: Mapped[list[str]] = mapped_column(
+        JSON,
+        default=list,
+        nullable=False,
+    )
+    primary_matched_keyword: Mapped[str | None] = mapped_column(String(255))
+    keyword_match_count: Mapped[int] = mapped_column(
+        Integer,
+        default=0,
+        nullable=False,
+    )
     keyword_hit_title: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
     )

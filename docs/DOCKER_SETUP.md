@@ -1,5 +1,7 @@
 # Docker 部署指南
 
+> 文档角色：本文件只负责 Docker 使用与部署步骤。项目级技术栈、环境基线和文档治理口径以 `docs/02-tech-stack-and-env.md` 为准。
+
 SpiderBilibili 提供两种 Docker 使用方式：
 
 - 仅使用 Docker 启动 PostgreSQL 和 Redis，前后端继续本地开发
@@ -127,4 +129,3 @@ docker compose --env-file docker/.env.production -f docker-compose.prod.yml down
 - 本地开发优先使用 `docker-compose.yml`
 - 发布环境再使用 `docker-compose.prod.yml`
 - 不要把真实的 `docker/.env.production` 提交到公共仓库
-

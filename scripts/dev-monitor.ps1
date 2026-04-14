@@ -14,12 +14,15 @@ $script:root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $script:runtimeDir = Join-Path $script:root ".runtime"
 $script:logDir = Join-Path $script:runtimeDir "logs"
 $script:devProcessStateFile = Join-Path $script:runtimeDir "dev-processes.json"
+$script:launcherStateFile = Join-Path $script:runtimeDir "launcher-process.json"
+$script:closerStateFile = Join-Path $script:runtimeDir "closer-process.json"
 $script:monitorCloseFlagFile = Join-Path $script:runtimeDir "dev-monitor.close.flag"
 $script:startScriptPath = Join-Path $PSScriptRoot "start-dev.ps1"
 $script:stopScriptPath = Join-Path $PSScriptRoot "stop-dev.ps1"
 $script:frontendUrl = "http://127.0.0.1:5174"
 $script:backendUrl = "http://127.0.0.1:8014"
 $script:backendHealthUrl = "$script:backendUrl/api/health"
+$script:monitorSessionId = Get-Date -Format "yyyyMMdd-HHmmss-fff"
 $script:launcherOutLog = Join-Path $script:logDir "launcher.out.log"
 $script:launcherErrLog = Join-Path $script:logDir "launcher.err.log"
 $script:closerOutLog = Join-Path $script:logDir "closer.out.log"
@@ -51,6 +54,168 @@ function Reset-LogFile {
     Remove-Item -Path $Path -Force -ErrorAction SilentlyContinue
   }
   New-Item -ItemType File -Path $Path -Force | Out-Null
+}
+
+function New-MonitorLogFilePath {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Role,
+    [Parameter(Mandatory = $true)]
+    [ValidateSet("out", "err")]
+    [string]$Stream
+  )
+
+  Ensure-RuntimeDirectory
+  return (Join-Path $script:logDir ($script:monitorSessionId + "-" + $Role + "." + $Stream + ".log"))
+}
+
+function Save-TrackedProcessState {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$StateFile,
+    [Parameter(Mandatory = $true)]
+    [System.Diagnostics.Process]$Process,
+    [Parameter(Mandatory = $true)]
+    [string]$StdOutPath,
+    [Parameter(Mandatory = $true)]
+    [string]$StdErrPath
+  )
+
+  Ensure-RuntimeDirectory
+  [pscustomobject]@{
+    id = $Process.Id
+    stdoutPath = $StdOutPath
+    stderrPath = $StdErrPath
+    updatedAt = (Get-Date).ToUniversalTime().ToString("o")
+  } | ConvertTo-Json -Depth 3 | Set-Content -Path $StateFile -Encoding UTF8
+}
+
+function Clear-TrackedProcessState {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$StateFile
+  )
+
+  if (Test-Path $StateFile) {
+    Remove-Item -Path $StateFile -Force -ErrorAction SilentlyContinue
+  }
+}
+
+function Get-TrackedProcessState {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$StateFile
+  )
+
+  if (-not (Test-Path $StateFile)) {
+    return $null
+  }
+
+  try {
+    return (Get-Content -Path $StateFile -Raw | ConvertFrom-Json)
+  }
+  catch {
+    return $null
+  }
+}
+
+function Get-LatestKnownLogPath {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Role,
+    [Parameter(Mandatory = $true)]
+    [ValidateSet("out", "err")]
+    [string]$Stream,
+    [Parameter(Mandatory = $true)]
+    [string]$LegacyPath
+  )
+
+  $latest = Get-ChildItem -Path $script:logDir -File -Filter ("*-" + $Role + "." + $Stream + ".log") -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTimeUtc -Descending |
+    Select-Object -First 1
+  if ($null -ne $latest) {
+    return $latest.FullName
+  }
+
+  return $LegacyPath
+}
+
+function Find-RunningScriptProcess {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$ScriptPath,
+    [string[]]$RequiredTokens = @()
+  )
+
+  $resolvedScriptPath = [string](Resolve-Path $ScriptPath)
+  $processes = Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe' OR Name = 'pwsh.exe'" -ErrorAction SilentlyContinue
+  foreach ($processInfo in @($processes)) {
+    $commandLine = [string]$processInfo.CommandLine
+    if ([string]::IsNullOrWhiteSpace($commandLine)) {
+      continue
+    }
+
+    if ($commandLine.IndexOf($resolvedScriptPath, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+      continue
+    }
+
+    $missingToken = $false
+    foreach ($token in $RequiredTokens) {
+      if ($commandLine.IndexOf($token, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+        $missingToken = $true
+        break
+      }
+    }
+
+    if ($missingToken) {
+      continue
+    }
+
+    return (Get-Process -Id $processInfo.ProcessId -ErrorAction SilentlyContinue)
+  }
+
+  return $null
+}
+
+function Get-TrackedRunningProcess {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$StateFile,
+    [Parameter(Mandatory = $true)]
+    [string]$Role,
+    [Parameter(Mandatory = $true)]
+    [string]$ScriptPath,
+    [string[]]$RequiredTokens = @(),
+    [Parameter(Mandatory = $true)]
+    [string]$LegacyStdOutPath,
+    [Parameter(Mandatory = $true)]
+    [string]$LegacyStdErrPath
+  )
+
+  $trackedState = Get-TrackedProcessState -StateFile $StateFile
+  if ($null -ne $trackedState -and $null -ne $trackedState.id) {
+    $trackedProcess = Get-Process -Id ([int]$trackedState.id) -ErrorAction SilentlyContinue
+    if ($null -ne $trackedProcess) {
+      return [pscustomobject]@{
+        Process = $trackedProcess
+        StdOutPath = [string]$trackedState.stdoutPath
+        StdErrPath = [string]$trackedState.stderrPath
+      }
+    }
+
+    Clear-TrackedProcessState -StateFile $StateFile
+  }
+
+  $fallbackProcess = Find-RunningScriptProcess -ScriptPath $ScriptPath -RequiredTokens $RequiredTokens
+  if ($null -eq $fallbackProcess) {
+    return $null
+  }
+
+  return [pscustomobject]@{
+    Process = $fallbackProcess
+    StdOutPath = Get-LatestKnownLogPath -Role $Role -Stream "out" -LegacyPath $LegacyStdOutPath
+    StdErrPath = Get-LatestKnownLogPath -Role $Role -Stream "err" -LegacyPath $LegacyStdErrPath
+  }
 }
 
 function Test-HttpReady {
@@ -172,6 +337,10 @@ function Get-RecentLogText {
     [int]$MaxLines = 30
   )
 
+  if ([string]::IsNullOrWhiteSpace($StdOutPath) -or [string]::IsNullOrWhiteSpace($StdErrPath)) {
+    return "No recent output."
+  }
+
   $lines = New-Object System.Collections.Generic.List[string]
 
   if (Test-Path $StdErrPath) {
@@ -202,6 +371,20 @@ function Start-LauncherProcess {
     return
   }
 
+  $trackedLauncher = Get-TrackedRunningProcess `
+    -StateFile $script:launcherStateFile `
+    -Role "launcher" `
+    -ScriptPath $script:startScriptPath `
+    -RequiredTokens @("-NoMonitor") `
+    -LegacyStdOutPath (Join-Path $script:logDir "launcher.out.log") `
+    -LegacyStdErrPath (Join-Path $script:logDir "launcher.err.log")
+  if ($null -ne $trackedLauncher) {
+    $script:launcherProcess = $trackedLauncher.Process
+    $script:launcherOutLog = $trackedLauncher.StdOutPath
+    $script:launcherErrLog = $trackedLauncher.StdErrPath
+    return
+  }
+
   if (Test-DevEnvironmentRunning) {
     $script:lastLauncherExitCode = 0
     return
@@ -212,6 +395,8 @@ function Start-LauncherProcess {
     Remove-Item -Path $script:monitorCloseFlagFile -Force -ErrorAction SilentlyContinue
   }
 
+  $script:launcherOutLog = New-MonitorLogFilePath -Role "launcher" -Stream "out"
+  $script:launcherErrLog = New-MonitorLogFilePath -Role "launcher" -Stream "err"
   Reset-LogFile -Path $script:launcherOutLog
   Reset-LogFile -Path $script:launcherErrLog
 
@@ -232,6 +417,11 @@ function Start-LauncherProcess {
     -RedirectStandardOutput $script:launcherOutLog `
     -RedirectStandardError $script:launcherErrLog `
     -PassThru
+  Save-TrackedProcessState `
+    -StateFile $script:launcherStateFile `
+    -Process $script:launcherProcess `
+    -StdOutPath $script:launcherOutLog `
+    -StdErrPath $script:launcherErrLog
 }
 
 function Start-StopperProcess {
@@ -243,7 +433,23 @@ function Start-StopperProcess {
     return
   }
 
+  $trackedStopper = Get-TrackedRunningProcess `
+    -StateFile $script:closerStateFile `
+    -Role "closer" `
+    -ScriptPath $script:stopScriptPath `
+    -RequiredTokens @() `
+    -LegacyStdOutPath (Join-Path $script:logDir "closer.out.log") `
+    -LegacyStdErrPath (Join-Path $script:logDir "closer.err.log")
+  if ($null -ne $trackedStopper) {
+    $script:stopProcess = $trackedStopper.Process
+    $script:closerOutLog = $trackedStopper.StdOutPath
+    $script:closerErrLog = $trackedStopper.StdErrPath
+    return
+  }
+
   Ensure-RuntimeDirectory
+  $script:closerOutLog = New-MonitorLogFilePath -Role "closer" -Stream "out"
+  $script:closerErrLog = New-MonitorLogFilePath -Role "closer" -Stream "err"
   Reset-LogFile -Path $script:closerOutLog
   Reset-LogFile -Path $script:closerErrLog
 
@@ -268,6 +474,11 @@ function Start-StopperProcess {
     -RedirectStandardOutput $script:closerOutLog `
     -RedirectStandardError $script:closerErrLog `
     -PassThru
+  Save-TrackedProcessState `
+    -StateFile $script:closerStateFile `
+    -Process $script:stopProcess `
+    -StdOutPath $script:closerOutLog `
+    -StdErrPath $script:closerErrLog
 }
 
 function Get-MonitorRows {
@@ -335,10 +546,12 @@ function Set-StatusText {
 function Update-ProcessExitState {
   if ($script:launcherProcess -and $script:launcherProcess.HasExited -and $null -eq $script:lastLauncherExitCode) {
     $script:lastLauncherExitCode = $script:launcherProcess.ExitCode
+    Clear-TrackedProcessState -StateFile $script:launcherStateFile
   }
 
   if ($script:stopProcess -and $script:stopProcess.HasExited -and $null -eq $script:lastCloserExitCode) {
     $script:lastCloserExitCode = $script:stopProcess.ExitCode
+    Clear-TrackedProcessState -StateFile $script:closerStateFile
   }
 }
 
@@ -462,6 +675,32 @@ function New-LogTextBox {
 }
 
 Ensure-RuntimeDirectory
+$trackedLauncherAtStartup = Get-TrackedRunningProcess `
+  -StateFile $script:launcherStateFile `
+  -Role "launcher" `
+  -ScriptPath $script:startScriptPath `
+  -RequiredTokens @("-NoMonitor") `
+  -LegacyStdOutPath (Join-Path $script:logDir "launcher.out.log") `
+  -LegacyStdErrPath (Join-Path $script:logDir "launcher.err.log")
+if ($null -ne $trackedLauncherAtStartup) {
+  $script:launcherProcess = $trackedLauncherAtStartup.Process
+  $script:launcherOutLog = $trackedLauncherAtStartup.StdOutPath
+  $script:launcherErrLog = $trackedLauncherAtStartup.StdErrPath
+}
+
+$trackedCloserAtStartup = Get-TrackedRunningProcess `
+  -StateFile $script:closerStateFile `
+  -Role "closer" `
+  -ScriptPath $script:stopScriptPath `
+  -RequiredTokens @() `
+  -LegacyStdOutPath (Join-Path $script:logDir "closer.out.log") `
+  -LegacyStdErrPath (Join-Path $script:logDir "closer.err.log")
+if ($null -ne $trackedCloserAtStartup) {
+  $script:stopProcess = $trackedCloserAtStartup.Process
+  $script:closerOutLog = $trackedCloserAtStartup.StdOutPath
+  $script:closerErrLog = $trackedCloserAtStartup.StdErrPath
+}
+
 if (Test-Path $script:monitorCloseFlagFile) {
   Remove-Item -Path $script:monitorCloseFlagFile -Force -ErrorAction SilentlyContinue
 }

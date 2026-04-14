@@ -260,9 +260,17 @@ def test_statistics_service_persists_analysis_snapshot_metadata() -> None:
 
 def test_statistics_service_includes_popular_author_analysis() -> None:
     class FakePopularAuthorService:
-        def build_for_task(self, task, *, video_insights, topic_insights):
+        def build_for_task(
+            self,
+            task,
+            *,
+            video_insights,
+            topic_insights,
+            fetch_author_videos=True,
+        ):
             assert video_insights
             assert topic_insights
+            assert fetch_author_videos is True
             return PopularAuthorAnalysisResult(
                 popular_authors=[
                     TaskAnalysisPopularAuthorRead(
@@ -334,3 +342,97 @@ def test_statistics_service_includes_popular_author_analysis() -> None:
         assert result.advanced.popular_authors[0].author_name == "测试 UP"
         assert result.advanced.topic_hot_authors
         assert result.advanced.author_analysis_notes
+
+
+def test_statistics_service_applies_custom_metric_weights() -> None:
+    with build_session() as session:
+        task = seed_statistics_task(session)
+        task.extra_params = {
+            "analysis_metric_weights": {
+                "updated_at": "2026-04-14T12:00:00Z",
+                "metrics": {
+                    "burst_score": {
+                        "search_growth": 0.9,
+                        "publish_velocity": 0.1,
+                        "history_velocity": 0.0,
+                    }
+                },
+            }
+        }
+        session.commit()
+        TopicClusterService(session).cluster_task(task)
+
+        customized_result = StatisticsService(session).calculate_task_statistics(task.id)
+
+    burst_config = next(
+        item
+        for item in customized_result.advanced.metric_weight_configs
+        if item.metric_key == "burst_score"
+    )
+    assert burst_config.customized is True
+    assert burst_config.formula.startswith("0.90 *")
+    assert burst_config.components[0].weight == 0.9
+    assert any("自定义指标权重" in note for note in customized_result.advanced.data_notes)
+
+    with build_session() as session:
+        task = seed_statistics_task(session)
+        TopicClusterService(session).cluster_task(task)
+        default_result = StatisticsService(session).calculate_task_statistics(task.id)
+
+    default_by_bvid = {
+        item.bvid: item.burst_score for item in default_result.advanced.video_insights
+    }
+    customized_by_bvid = {
+        item.bvid: item.burst_score
+        for item in customized_result.advanced.video_insights
+    }
+    assert customized_by_bvid
+    assert customized_by_bvid != default_by_bvid
+
+
+def test_statistics_service_limits_history_snapshots_to_current_task() -> None:
+    with build_session() as session:
+        task = seed_statistics_task(session)
+        topic_service = TopicClusterService(session)
+        topic_service.cluster_task(task)
+
+        shared_video = session.query(Video).filter_by(bvid="BV1stat1").one()
+        other_task = CrawlTask(
+            keyword="AI-other",
+            status=TaskStatus.SUCCESS,
+            requested_video_limit=10,
+            max_pages=2,
+            min_sleep_seconds=Decimal("0.01"),
+            max_sleep_seconds=Decimal("0.01"),
+            enable_proxy=False,
+            source_ip_strategy="local_sleep",
+        )
+        session.add(other_task)
+        session.flush()
+        session.add(
+            VideoMetricSnapshot(
+                task_id=other_task.id,
+                video_id=shared_video.id,
+                view_count=99999,
+                like_count=1,
+                coin_count=1,
+                favorite_count=1,
+                share_count=1,
+                reply_count=1,
+                danmaku_count=1,
+                metrics_payload={"source": "other-task"},
+                captured_at=datetime(2026, 4, 8, tzinfo=timezone.utc),
+            )
+        )
+        session.commit()
+
+        result = StatisticsService(session).calculate_task_statistics(task.id)
+
+        explosive_video = next(
+            item for item in result.advanced.video_insights if item.bvid == "BV1stat1"
+        )
+        assert explosive_video.historical_snapshot_count == 2
+        assert [point.view_count for point in explosive_video.history if point.label == "snapshot"] == [
+            820,
+            1000,
+        ]

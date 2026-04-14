@@ -19,6 +19,17 @@
       :current-stage="taskProgress.current_stage"
     />
 
+    <TaskSearchContextCard
+      v-if="taskProgress"
+      :task-keyword="taskProgress.keyword_expansion?.source_keyword ?? workspaceStore.currentTaskLabel"
+      :keyword-expansion="taskProgress.keyword_expansion"
+      :search-keywords-used="taskProgress.search_keywords_used"
+      :expanded-keyword-count="taskProgress.expanded_keyword_count"
+      :crawl-mode="taskCrawlMode"
+      title="分析样本搜索口径"
+      description="主题分析不会按同义词拆成多份，但这里会明确说明当前主题聚类、趋势和热点判断使用了哪些搜索词召回的样本。"
+    />
+
     <section v-if="analysis" class="stats-grid stats-grid--wide">
       <StatCard label="总视频数" :value="formatNumber(analysis.summary.total_videos)" />
       <StatCard label="平均播放量" :value="formatCompactNumber(analysis.summary.average_view_count)" />
@@ -26,6 +37,80 @@
       <StatCard label="高爆发样本" :value="formatNumber(analysis.advanced.explosive_videos.length)" />
       <StatCard label="深度样本" :value="formatNumber(analysis.advanced.deep_videos.length)" />
       <StatCard label="有历史快照的视频" :value="formatNumber(historyCoveredCount)" />
+    </section>
+
+    <section class="panel-section">
+      <div class="panel-section__head">
+        <div>
+          <h4>分析权重配置</h4>
+          <p>修改后需要确认并重新分析，新的图表、热点判断和 AI 报告会一起更新。</p>
+        </div>
+        <div class="toolbar__actions">
+          <el-button
+            :disabled="!metricWeightConfigs.length || savingMetricWeights"
+            @click="resetMetricWeightsToDefault"
+          >
+            恢复默认权重
+          </el-button>
+          <el-button
+            type="primary"
+            :loading="savingMetricWeights"
+            :disabled="!metricWeightsDirty"
+            data-testid="metric-weight-submit-button"
+            @click="handleReanalyzeWithUpdatedWeights"
+          >
+            确认并重新分析
+          </el-button>
+        </div>
+      </div>
+      <div v-if="metricWeightConfigs.length" class="metric-weight-grid">
+        <article
+          v-for="config in metricWeightConfigs"
+          :key="config.metric_key"
+          class="metric-weight-card"
+        >
+          <div class="metric-card__head">
+            <strong>{{ config.metric_name }}</strong>
+            <el-tag
+              size="small"
+              effect="plain"
+              :type="config.customized ? 'warning' : 'info'"
+            >
+              {{ config.customized ? '已自定义' : '默认口径' }}
+            </el-tag>
+          </div>
+          <div class="metric-card__formula">{{ config.formula }}</div>
+          <div
+            v-for="component in config.components"
+            :key="`${config.metric_key}-${component.key}`"
+            class="metric-weight-row"
+          >
+            <div>
+              <span>{{ component.label }}</span>
+              <small>
+                默认 {{ component.default_weight }} / 当前生效 {{ component.effective_weight.toFixed(2) }}
+              </small>
+            </div>
+            <el-input-number
+              :model-value="getMetricWeightDraft(config.metric_key, component.key, component.weight)"
+              :min="0"
+              :step="0.05"
+              :precision="2"
+              controls-position="right"
+              :data-testid="`metric-weight-${config.metric_key}-${component.key}`"
+              @update:model-value="setMetricWeightDraftValue(config.metric_key, component.key, $event)"
+            />
+          </div>
+          <p v-if="config.normalization_note" class="chart-note">
+            {{ config.normalization_note }}
+          </p>
+        </article>
+      </div>
+      <EmptyState
+        v-else
+        title="权重配置尚未生成"
+        description="主题分析完成后，这里会展示当前指标可编辑的权重配置。"
+      />
     </section>
 
     <section class="panel-section">
@@ -679,20 +764,27 @@
 </template>
 
 <script setup lang="ts">
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { getErrorMessage, isRequestCanceled } from '@/api/client'
-import { exportTaskResults, getTaskAnalysis, getTaskProgress } from '@/api/tasks'
+import {
+  exportTaskResults,
+  getTaskAnalysis,
+  getTaskProgress,
+  updateTaskAnalysisWeights,
+} from '@/api/tasks'
 import type {
   ExportDataset,
   ExportFormat,
   TaskAnalysisMetricDefinition,
+  TaskAnalysisMetricWeightConfig,
   TaskAnalysisPayload,
   TaskAnalysisTopicInsight,
   TaskAnalysisVideoHistoryPoint,
   TaskAnalysisVideoInsight,
+  TaskAnalysisWeightsUpdateRequest,
   TaskProgressPayload,
   TaskTopic,
 } from '@/api/types'
@@ -707,6 +799,7 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import InsightText from '@/components/common/InsightText.vue'
 import StatCard from '@/components/common/StatCard.vue'
 import TaskLifecycleNotice from '@/components/tasks/TaskLifecycleNotice.vue'
+import TaskSearchContextCard from '@/components/tasks/TaskSearchContextCard.vue'
 import { useTaskWorkspaceStore } from '@/stores/taskWorkspace'
 import {
   formatCompactNumber,
@@ -781,10 +874,12 @@ const analysis = ref<TaskAnalysisPayload | null>(null)
 const taskProgress = ref<TaskProgressPayload | null>(null)
 const loading = ref(false)
 const exporting = ref(false)
+const savingMetricWeights = ref(false)
 const selectedTopicName = ref('')
 const compareMode = ref(false)
 const selectedExplosiveVideoId = ref('')
 const latestProgressLogId = ref('')
+const metricWeightDrafts = reactive<Record<string, Record<string, number>>>({})
 
 const publishedWindow = reactive<{ start: string; end: string; granularity: PublishedGranularity }>({
   start: '',
@@ -862,6 +957,10 @@ const metricDefinitions = computed<TaskAnalysisMetricDefinition[]>(() => {
   return analysis.value?.advanced.metric_definitions ?? []
 })
 
+const metricWeightConfigs = computed<TaskAnalysisMetricWeightConfig[]>(() => {
+  return analysis.value?.advanced.metric_weight_configs ?? []
+})
+
 const topicInsightByName = computed<Record<string, TaskAnalysisTopicInsight>>(() => {
   return allTopicInsights.value.reduce<Record<string, TaskAnalysisTopicInsight>>((accumulator, item) => {
     accumulator[item.topic_name] = item
@@ -933,6 +1032,9 @@ const taskOptions = computed<Record<string, unknown>>(() => {
   const raw = extraParams.task_options
   return raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
 })
+const taskCrawlMode = computed<'keyword' | 'hot'>(() =>
+  String(taskOptions.value.crawl_mode || 'keyword') === 'hot' ? 'hot' : 'keyword',
+)
 
 const taskScopeLabel = computed(() => {
   const scope = String(taskOptions.value.search_scope || 'site')
@@ -940,6 +1042,15 @@ const taskScopeLabel = computed(() => {
     return `固定分区：${String(taskOptions.value.partition_name || taskOptions.value.partition_tid || '未命名分区')}`
   }
   return 'B 站全站'
+})
+
+const metricWeightsDirty = computed(() => {
+  return metricWeightConfigs.value.some((config) =>
+    config.components.some((component) => {
+      const currentValue = getMetricWeightDraft(config.metric_key, component.key, component.weight)
+      return Math.abs(currentValue - component.weight) > 1e-6
+    }),
+  )
 })
 
 const filteredPublishedVideos = computed(() => {
@@ -1207,7 +1318,11 @@ function calculateTopicHeatIndex(videos: TaskAnalysisVideoInsight[]) {
   const totalHeatScore = sum(videos.map((video) => video.heat_score))
   const averageBurstScore = average(videos.map((video) => video.burst_score || 0))
   const averageCommunityScore = average(videos.map((video) => video.community_score || 0))
-  return round(totalHeatScore + averageBurstScore + averageCommunityScore)
+  return round(
+    totalHeatScore * getEffectiveMetricWeight('topic_heat_index', 'total_heat_score', 1)
+      + averageBurstScore * getEffectiveMetricWeight('topic_heat_index', 'average_burst_score', 1)
+      + averageCommunityScore * getEffectiveMetricWeight('topic_heat_index', 'average_community_score', 1),
+  )
 }
 
 function parseDateValue(value: string | null | undefined, endOfDay = false): Date | null {
@@ -1418,6 +1533,58 @@ function compactMetricText(text: string) {
     .join('；')
 }
 
+function syncMetricWeightDrafts() {
+  Object.keys(metricWeightDrafts).forEach((metricKey) => {
+    delete metricWeightDrafts[metricKey]
+  })
+  metricWeightConfigs.value.forEach((config) => {
+    metricWeightDrafts[config.metric_key] = config.components.reduce<Record<string, number>>((accumulator, item) => {
+      accumulator[item.key] = item.weight
+      return accumulator
+    }, {})
+  })
+}
+
+function getMetricWeightDraft(metricKey: string, componentKey: string, fallback: number) {
+  return metricWeightDrafts[metricKey]?.[componentKey] ?? fallback
+}
+
+function setMetricWeightDraftValue(metricKey: string, componentKey: string, value: number | null | undefined) {
+  if (!metricWeightDrafts[metricKey]) {
+    metricWeightDrafts[metricKey] = {}
+  }
+  const normalizedValue = typeof value === 'number' && Number.isFinite(value) ? Math.max(value, 0) : 0
+  metricWeightDrafts[metricKey][componentKey] = Number(normalizedValue.toFixed(2))
+}
+
+function buildMetricWeightUpdatePayload(): TaskAnalysisWeightsUpdateRequest {
+  return {
+    metrics: metricWeightConfigs.value.map((config) => ({
+      metric_key: config.metric_key,
+      components: config.components.map((component) => ({
+        key: component.key,
+        weight: getMetricWeightDraft(config.metric_key, component.key, component.weight),
+      })),
+    })),
+  }
+}
+
+function resetMetricWeightsToDefault() {
+  metricWeightConfigs.value.forEach((config) => {
+    config.components.forEach((component) => {
+      setMetricWeightDraftValue(config.metric_key, component.key, component.default_weight)
+    })
+  })
+}
+
+function getEffectiveMetricWeight(metricKey: string, componentKey: string, fallback: number) {
+  const config = metricWeightConfigs.value.find((item) => item.metric_key === metricKey)
+  if (!config) {
+    return fallback
+  }
+  return config.components.find((item) => item.key === componentKey)?.effective_weight ?? fallback
+}
+
 function syncPublishedWindow() {
   const datedVideos = allVideoInsights.value
     .map((video) => parseDateValue(video.published_at))
@@ -1518,6 +1685,14 @@ function syncSelections() {
   }
 }
 
+function applyAnalysisResponse(response: TaskAnalysisPayload) {
+  analysis.value = response
+  syncSelections()
+  syncMetricWeightDrafts()
+  syncPublishedWindow()
+  syncHistoryWindow()
+}
+
 async function fetchAnalysis() {
   const controller = replaceController(analysisController)
   analysisController = controller
@@ -1528,10 +1703,7 @@ async function fetchAnalysis() {
     if (analysisController !== controller) {
       return
     }
-    analysis.value = response
-    syncSelections()
-    syncPublishedWindow()
-    syncHistoryWindow()
+    applyAnalysisResponse(response)
   } catch (error) {
     if (!isRequestCanceled(error)) {
       ElMessage.error(getErrorMessage(error, '加载主题分析失败。'))
@@ -1606,6 +1778,45 @@ async function handleExport() {
   }
 }
 
+async function handleReanalyzeWithUpdatedWeights() {
+  if (!metricWeightsDirty.value) {
+    return
+  }
+
+  const payload = buildMetricWeightUpdatePayload()
+  const invalidMetric = payload.metrics.find((item) => item.components.reduce((total, component) => total + component.weight, 0) <= 0)
+  if (invalidMetric) {
+    ElMessage.error(`指标 ${invalidMetric.metric_key} 的权重和必须大于 0。`)
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      '确认后将基于新的权重重新开始分析，并覆盖当前主题分析与任务报告结果。',
+      '确认重新分析',
+      {
+        type: 'warning',
+        confirmButtonText: '确认并重新分析',
+        cancelButtonText: '取消',
+      },
+    )
+  } catch {
+    return
+  }
+
+  savingMetricWeights.value = true
+  try {
+    const response = await updateTaskAnalysisWeights(taskId.value, payload)
+    applyAnalysisResponse(response)
+    await fetchTaskProgress()
+    ElMessage.success('分析权重已更新，主题分析和任务报告已重新生成。')
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, '更新分析权重并重新分析失败。'))
+  } finally {
+    savingMetricWeights.value = false
+  }
+}
+
 watch(taskId, () => {
   abortPendingRequests()
   selectedTopicName.value = ''
@@ -1618,6 +1829,7 @@ watch(taskId, () => {
   analysis.value = null
   taskProgress.value = null
   latestProgressLogId.value = ''
+  syncMetricWeightDrafts()
   void Promise.all([fetchTaskProgress(), fetchAnalysis()])
 })
 
@@ -1658,6 +1870,7 @@ onBeforeUnmount(() => {
 }
 
 .metric-grid,
+.metric-weight-grid,
 .signal-grid,
 .recommendation-grid,
 .insight-grid {
@@ -1669,7 +1882,12 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.metric-weight-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .metric-card,
+.metric-weight-card,
 .signal-item,
 .recommendation-card {
   border: 1px solid rgba(100, 72, 46, 0.12);
@@ -1682,6 +1900,13 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.metric-weight-card {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .metric-card__head {
@@ -1721,6 +1946,23 @@ onBeforeUnmount(() => {
   color: var(--accent);
   font-size: 12px;
   font-weight: 700;
+}
+
+.metric-weight-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.metric-weight-row > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.metric-weight-row small {
+  color: var(--muted);
 }
 
 .metric-card__line small {

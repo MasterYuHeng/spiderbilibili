@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.models.base import utc_now
 from app.models.enums import TaskStage
 from app.schemas.task import (
+    TaskAnalysisMetricWeightConfigRead,
     TaskAnalysisPayload,
     TaskAnalysisRecommendationRead,
     TaskAnalysisTopicInsightRead,
@@ -26,7 +27,12 @@ from app.services.task_result_service import (
     get_task_analysis,
     load_cached_analysis_snapshot,
 )
-from app.services.task_service import get_task_or_raise
+from app.services.task_service import (
+    build_task_keyword_expansion_read,
+    get_task_or_raise,
+    resolve_task_expanded_keyword_count,
+    resolve_task_search_keywords_used,
+)
 
 
 @dataclass(slots=True)
@@ -61,7 +67,7 @@ class TaskReportService:
 
     def build_report(self, task_id: str) -> TaskReportPayload:
         task = get_task_or_raise(self.session, task_id)
-        cached_report = self._load_cached_report_snapshot(task.extra_params)
+        cached_report = self._load_cached_report_snapshot(task)
         if cached_report is not None:
             return cached_report
 
@@ -83,7 +89,6 @@ class TaskReportService:
             task.extra_params,
             {"report_snapshot": report.model_dump(mode="json")},
         )
-        self.session.commit()
         create_task_log(
             self.session,
             task=task,
@@ -107,6 +112,7 @@ class TaskReportService:
         status_override: str | None = None,
     ) -> TaskReportPayload:
         extra_params = task.extra_params if isinstance(task.extra_params, dict) else {}
+        report_search_context = self._build_report_search_context(task)
         scope_label = self._build_scope_label(extra_params)
         latest_hot_topic = analysis.advanced.latest_hot_topic.topic
         momentum_topic = analysis.advanced.momentum_topics[0] if analysis.advanced.momentum_topics else None
@@ -175,10 +181,15 @@ class TaskReportService:
                 if video is not None
             ],
             data_notes=analysis.advanced.data_notes,
+            metric_weight_configs=analysis.advanced.metric_weight_configs,
         )
         report_markdown = self._build_markdown(
             title=title,
             subtitle=subtitle,
+            task_keyword=report_search_context["task_keyword"],
+            keyword_expansion=report_search_context["keyword_expansion"],
+            search_keywords_used=report_search_context["search_keywords_used"],
+            expanded_keyword_count=report_search_context["expanded_keyword_count"],
             executive_summary=executive_summary,
             sections=sections,
             ai_outputs=ai_outputs,
@@ -188,10 +199,14 @@ class TaskReportService:
             task_id=task.id,
             status=status_override or task.status.value,
             generated_at=analysis.generated_at or utc_now(),
+            task_keyword=report_search_context["task_keyword"],
             title=title,
             subtitle=subtitle,
             executive_summary=executive_summary,
             latest_hot_topic_name=latest_hot_topic.topic_name if latest_hot_topic is not None else None,
+            keyword_expansion=report_search_context["keyword_expansion"],
+            search_keywords_used=report_search_context["search_keywords_used"],
+            expanded_keyword_count=report_search_context["expanded_keyword_count"],
             featured_videos=self._build_featured_videos(
                 analysis.advanced.recommendations,
                 fallback_videos=[top_explosive_video, top_deep_video, top_community_video],
@@ -227,10 +242,8 @@ class TaskReportService:
 
         return get_task_analysis(self.session, task.id)
 
-    def _load_cached_report_snapshot(
-        self,
-        extra_params: dict[str, Any] | None,
-    ) -> TaskReportPayload | None:
+    def _load_cached_report_snapshot(self, task) -> TaskReportPayload | None:
+        extra_params = task.extra_params if isinstance(task.extra_params, dict) else {}
         if not isinstance(extra_params, dict):
             return None
 
@@ -239,9 +252,28 @@ class TaskReportService:
             return None
 
         try:
-            return TaskReportPayload.model_validate(snapshot)
+            cached_report = TaskReportPayload.model_validate(snapshot)
         except Exception:
             return None
+        report_search_context = self._build_report_search_context(task)
+        return cached_report.model_copy(
+            update={
+                "status": task.status.value,
+                "task_keyword": cached_report.task_keyword
+                or report_search_context["task_keyword"],
+                "keyword_expansion": cached_report.keyword_expansion
+                or report_search_context["keyword_expansion"],
+                "search_keywords_used": (
+                    cached_report.search_keywords_used
+                    or report_search_context["search_keywords_used"]
+                ),
+                "expanded_keyword_count": (
+                    cached_report.expanded_keyword_count
+                    if cached_report.expanded_keyword_count > 0
+                    else report_search_context["expanded_keyword_count"]
+                ),
+            }
+        )
 
     @staticmethod
     def _merge_report_payload(
@@ -264,6 +296,7 @@ class TaskReportService:
         latest_hot_topic: TaskAnalysisTopicInsightRead | None,
         top_videos: list[TaskAnalysisVideoInsightRead],
         data_notes: list[str],
+        metric_weight_configs: list[TaskAnalysisMetricWeightConfigRead],
     ) -> list[TaskReportAiOutputRead]:
         specs = self._prompt_specs()
         context = self._build_ai_context(
@@ -276,6 +309,7 @@ class TaskReportService:
             latest_hot_topic=latest_hot_topic,
             top_videos=top_videos,
             data_notes=data_notes,
+            metric_weight_configs=metric_weight_configs,
         )
         prompt = AiPromptBundle(
             system_prompt=(
@@ -340,6 +374,7 @@ class TaskReportService:
         latest_hot_topic: TaskAnalysisTopicInsightRead | None,
         top_videos: list[TaskAnalysisVideoInsightRead],
         data_notes: list[str],
+        metric_weight_configs: list[TaskAnalysisMetricWeightConfigRead],
     ) -> dict[str, Any]:
         return {
             "task_keyword": keyword,
@@ -388,6 +423,29 @@ class TaskReportService:
                 for video in top_videos[:5]
             ],
             "data_notes": data_notes[:8],
+            "metric_weight_configs": [
+                {
+                    "metric_name": item.metric_name,
+                    "formula": item.formula,
+                    "customized": item.customized,
+                }
+                for item in metric_weight_configs[:8]
+            ],
+        }
+
+    def _build_report_search_context(self, task) -> dict[str, Any]:
+        keyword_expansion = build_task_keyword_expansion_read(task)
+        return {
+            "task_keyword": task.keyword,
+            "keyword_expansion": keyword_expansion,
+            "search_keywords_used": resolve_task_search_keywords_used(
+                task,
+                keyword_expansion=keyword_expansion,
+            ),
+            "expanded_keyword_count": resolve_task_expanded_keyword_count(
+                task,
+                keyword_expansion=keyword_expansion,
+            ),
         }
 
     def _build_scope_label(self, extra_params: dict[str, Any]) -> str:
@@ -692,6 +750,10 @@ class TaskReportService:
         *,
         title: str,
         subtitle: str | None,
+        task_keyword: str | None,
+        keyword_expansion,
+        search_keywords_used: list[str],
+        expanded_keyword_count: int,
         executive_summary: str,
         sections: list[TaskReportSectionRead],
         ai_outputs: list[TaskReportAiOutputRead],
@@ -700,6 +762,18 @@ class TaskReportService:
         if subtitle:
             lines.append(subtitle)
         lines.append("")
+        lines.append("## 搜索口径")
+        lines.append(f"- 原始关键词：{task_keyword or '--'}")
+        lines.append(
+            f"- 是否启用关键词同义补充：{'是' if keyword_expansion and keyword_expansion.enabled else '否'}"
+        )
+        lines.append(
+            f"- 扩词状态：{keyword_expansion.status if keyword_expansion is not None else 'skipped'}"
+        )
+        lines.append(f"- 新增同义词数量：{expanded_keyword_count}")
+        lines.append(
+            f"- 实际搜索词：{'、'.join(search_keywords_used) if search_keywords_used else '--'}"
+        )
         lines.append("## 执行摘要")
         lines.append(executive_summary)
         for section in sections:

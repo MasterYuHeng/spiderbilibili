@@ -58,7 +58,29 @@ def seed_report_task(session: Session) -> str:
         max_sleep_seconds=Decimal("2.00"),
         enable_proxy=False,
         source_ip_strategy="local_sleep",
-        extra_params={"task_options": {"search_scope": "site"}},
+        extra_params={
+            "task_options": {
+                "crawl_mode": "keyword",
+                "search_scope": "site",
+                "enable_keyword_synonym_expansion": True,
+                "keyword_synonym_count": 1,
+            },
+            "keyword_expansion": {
+                "source_keyword": "AI",
+                "enabled": True,
+                "requested_synonym_count": 1,
+                "generated_synonyms": ["AIGC"],
+                "expanded_keywords": ["AI", "AIGC"],
+                "status": "success",
+                "model_name": "gpt-expand",
+                "error_message": None,
+                "generated_at": "2026-04-09T00:00:00Z",
+            },
+            "crawl_stats": {
+                "search_keywords_used": ["AI", "AIGC"],
+                "expanded_keyword_count": 1,
+            },
+        },
     )
     session.add(task)
     session.flush()
@@ -171,6 +193,11 @@ def test_task_report_service_returns_ai_outputs_when_ai_available() -> None:
         assert report.ai_outputs[0].key == "melon_reader"
         assert report.ai_outputs[0].generation_mode == "ai"
         assert report.ai_outputs[0].model_name == "gpt-test"
+        assert report.keyword_expansion is not None
+        assert report.keyword_expansion.status == "success"
+        assert report.search_keywords_used == ["AI", "AIGC"]
+        assert report.expanded_keyword_count == 1
+        assert "实际搜索词：AI、AIGC" in report.report_markdown
         assert "吃瓜版结果" in report.ai_outputs[0].content
     finally:
         session.close()
@@ -191,8 +218,10 @@ def test_task_report_service_can_persist_and_reuse_report_snapshot() -> None:
 
         cached = service.build_report(task_id)
         assert cached.task_id == generated.task_id
+        assert cached.status == task.status.value
         assert cached.generated_at == generated.generated_at
         assert cached.sections[0].title == generated.sections[0].title
+        assert cached.search_keywords_used == ["AI", "AIGC"]
     finally:
         session.close()
 

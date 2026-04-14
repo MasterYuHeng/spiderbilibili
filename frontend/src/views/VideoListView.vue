@@ -19,6 +19,18 @@
       :current-stage="taskProgress.current_stage"
     />
 
+    <TaskSearchContextCard
+      v-if="taskProgress"
+      :task-keyword="taskProgress.keyword_expansion?.source_keyword ?? workspaceStore.currentTaskLabel"
+      :keyword-expansion="taskProgress.keyword_expansion"
+      :search-keywords-used="taskProgress.search_keywords_used"
+      :expanded-keyword-count="taskProgress.expanded_keyword_count"
+      :crawl-mode="taskCrawlMode"
+      title="搜索口径与命中来源"
+      description="这里会说明任务实际使用了哪些搜索词，下面的视频列表也会标出每条视频是由哪个词召回的。"
+      compact
+    />
+
     <section class="panel-section">
       <div class="filter-layout">
         <section class="filter-card filter-card--compact">
@@ -165,6 +177,26 @@
           </template>
         </el-table-column>
 
+        <el-table-column label="命中来源词" width="220">
+          <template #default="{ row }">
+            <div v-if="row.matched_keywords.length" class="metric-stack">
+              <span>主命中词 {{ row.primary_matched_keyword || '--' }}</span>
+              <span>命中次数 {{ row.keyword_match_count }}</span>
+              <div class="tag-cluster">
+                <el-tag
+                  v-for="keyword in row.matched_keywords"
+                  :key="`${row.video_id}-${keyword}`"
+                  effect="plain"
+                  type="warning"
+                >
+                  {{ keyword }}
+                </el-tag>
+              </div>
+            </div>
+            <span v-else>--</span>
+          </template>
+        </el-table-column>
+
         <el-table-column label="核心指标" width="200">
           <template #default="{ row }">
             <div class="metric-stack">
@@ -247,6 +279,7 @@ import type {
 import EmptyState from '@/components/common/EmptyState.vue'
 import InsightText from '@/components/common/InsightText.vue'
 import TaskLifecycleNotice from '@/components/tasks/TaskLifecycleNotice.vue'
+import TaskSearchContextCard from '@/components/tasks/TaskSearchContextCard.vue'
 import { useTaskWorkspaceStore, type VideoFilterState } from '@/stores/taskWorkspace'
 import {
   formatCompactNumber,
@@ -350,6 +383,15 @@ let topicsController: AbortController | null = null
 let videosController: AbortController | null = null
 
 const filters = reactive<VideoFilterState>(workspaceStore.ensureVideoFilters(taskId.value))
+const taskCrawlMode = computed<'keyword' | 'hot'>(() => {
+  const taskOptions = taskProgress.value?.extra_params?.task_options
+  if (taskOptions && typeof taskOptions === 'object') {
+    return String((taskOptions as Record<string, unknown>).crawl_mode || 'keyword') === 'hot'
+      ? 'hot'
+      : 'keyword'
+  }
+  return 'keyword'
+})
 
 const exportDataset = computed({
   get: () => workspaceStore.exportDataset as ExportDataset,

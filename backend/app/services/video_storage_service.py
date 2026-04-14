@@ -102,7 +102,13 @@ class VideoStorageService:
             self.session.add(task_video)
 
         candidate = scored_video.bundle.candidate
+        matched_keywords, primary_matched_keyword = self._build_keyword_match_fields(
+            candidate
+        )
         task_video.search_rank = candidate.search_rank
+        task_video.matched_keywords = matched_keywords
+        task_video.primary_matched_keyword = primary_matched_keyword
+        task_video.keyword_match_count = len(matched_keywords)
         task_video.keyword_hit_title = scored_video.keyword_hit_title
         task_video.keyword_hit_description = scored_video.keyword_hit_description
         task_video.keyword_hit_tags = scored_video.keyword_hit_tags
@@ -212,3 +218,26 @@ class VideoStorageService:
                 "composite_score": scored_video.composite_score,
             },
         }
+
+    @staticmethod
+    def _build_keyword_match_fields(candidate) -> tuple[list[str], str | None]:
+        matched_keywords: list[str] = []
+        seen: set[str] = set()
+        for item in list(getattr(candidate, "matched_keywords", []) or []):
+            normalized_item = str(item or "").strip()
+            if not normalized_item or normalized_item in seen:
+                continue
+            matched_keywords.append(normalized_item)
+            seen.add(normalized_item)
+
+        primary_matched_keyword = str(
+            getattr(candidate, "primary_matched_keyword", None) or ""
+        ).strip() or None
+        if primary_matched_keyword and primary_matched_keyword not in seen:
+            matched_keywords.append(primary_matched_keyword)
+            seen.add(primary_matched_keyword)
+
+        if primary_matched_keyword is None and matched_keywords:
+            primary_matched_keyword = matched_keywords[0]
+
+        return matched_keywords, primary_matched_keyword

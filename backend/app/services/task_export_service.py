@@ -20,7 +20,12 @@ from app.services.task_result_service import (
     get_task_topics,
     get_task_video_rows,
 )
-from app.services.task_service import get_task_or_raise
+from app.services.task_service import (
+    build_task_keyword_expansion_read,
+    get_task_or_raise,
+    resolve_task_expanded_keyword_count,
+    resolve_task_search_keywords_used,
+)
 
 
 @dataclass(slots=True)
@@ -54,7 +59,7 @@ class TaskExportService:
     ) -> ExportArtifact:
         task = get_task_or_raise(self.session, task_id)
         table = self._build_export_table(
-            task.id,
+            task,
             dataset=dataset,
             sort_by=sort_by,
             sort_order=sort_order,
@@ -96,7 +101,7 @@ class TaskExportService:
 
     def _build_export_table(
         self,
-        task_id: str,
+        task,
         *,
         dataset: str,
         sort_by: str,
@@ -106,17 +111,17 @@ class TaskExportService:
     ) -> ExportTable:
         if dataset == "videos":
             return self._build_video_export_table(
-                task_id,
+                task,
                 sort_by=sort_by,
                 sort_order=sort_order,
                 topic=topic,
                 filters=filters,
             )
         if dataset == "topics":
-            return self._build_topic_export_table(task_id, topic=topic)
+            return self._build_topic_export_table(task.id, topic=topic)
         if dataset == "summaries":
             return self._build_summary_export_table(
-                task_id,
+                task.id,
                 sort_by=sort_by,
                 sort_order=sort_order,
                 topic=topic,
@@ -126,13 +131,28 @@ class TaskExportService:
 
     def _build_video_export_table(
         self,
-        task_id: str,
+        task,
         *,
         sort_by: str,
         sort_order: str,
         topic: str | None,
         filters: TaskVideoMetricFilters | None,
     ) -> ExportTable:
+        keyword_expansion = build_task_keyword_expansion_read(task)
+        video_export_context = {
+            "original_keyword": keyword_expansion.source_keyword,
+            "enable_keyword_synonym_expansion": keyword_expansion.enabled,
+            "search_keywords_used": " | ".join(
+                resolve_task_search_keywords_used(
+                    task,
+                    keyword_expansion=keyword_expansion,
+                )
+            ),
+            "expanded_keyword_count": resolve_task_expanded_keyword_count(
+                task,
+                keyword_expansion=keyword_expansion,
+            ),
+        }
         columns = [
             "video_id",
             "bvid",
@@ -147,6 +167,13 @@ class TaskExportService:
             "published_at",
             "duration_seconds",
             "search_rank",
+            "original_keyword",
+            "enable_keyword_synonym_expansion",
+            "search_keywords_used",
+            "expanded_keyword_count",
+            "matched_keywords",
+            "primary_matched_keyword",
+            "keyword_match_count",
             "keyword_hit_title",
             "keyword_hit_description",
             "keyword_hit_tags",
@@ -178,13 +205,16 @@ class TaskExportService:
         ]
         task_rows = get_task_video_rows(
             self.session,
-            task_id,
+            task.id,
             sort_by=sort_by,
             sort_order=sort_order,
             topic=topic,
             filters=filters,
         )
-        table_rows = [self._flatten_video_row(item) for item in task_rows]
+        table_rows = [
+            self._flatten_video_row(item, export_context=video_export_context)
+            for item in task_rows
+        ]
         return ExportTable(sheet_name="videos", columns=columns, rows=table_rows)
 
     def _build_topic_export_table(
@@ -322,7 +352,11 @@ class TaskExportService:
         return output.getvalue()
 
     @staticmethod
-    def _flatten_video_row(item: TaskVideoRow) -> dict[str, Any]:
+    def _flatten_video_row(
+        item: TaskVideoRow,
+        *,
+        export_context: dict[str, Any],
+    ) -> dict[str, Any]:
         metrics = item.metric_snapshot
         text_content = item.text_content
         ai_summary = item.ai_summary
@@ -340,6 +374,15 @@ class TaskExportService:
             "published_at": _serialize_value(item.video.published_at),
             "duration_seconds": item.video.duration_seconds,
             "search_rank": item.task_video.search_rank,
+            "original_keyword": export_context["original_keyword"],
+            "enable_keyword_synonym_expansion": export_context[
+                "enable_keyword_synonym_expansion"
+            ],
+            "search_keywords_used": export_context["search_keywords_used"],
+            "expanded_keyword_count": export_context["expanded_keyword_count"],
+            "matched_keywords": " | ".join(item.task_video.matched_keywords or []),
+            "primary_matched_keyword": item.task_video.primary_matched_keyword,
+            "keyword_match_count": item.task_video.keyword_match_count,
             "keyword_hit_title": item.task_video.keyword_hit_title,
             "keyword_hit_description": item.task_video.keyword_hit_description,
             "keyword_hit_tags": item.task_video.keyword_hit_tags,

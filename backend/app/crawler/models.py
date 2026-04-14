@@ -37,7 +37,31 @@ class SearchVideoCandidate:
     danmaku_count: int = 0
     tag_names: list[str] = field(default_factory=list)
     hit_columns: list[str] = field(default_factory=list)
+    matched_keywords: list[str] = field(default_factory=list)
+    primary_matched_keyword: str | None = None
     raw_payload: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        normalized_keyword = _normalize_candidate_keyword(self.keyword)
+        matched_keywords = _normalize_matched_keywords(
+            self.matched_keywords,
+            fallback_keyword=normalized_keyword,
+        )
+        primary_matched_keyword = _normalize_candidate_keyword(
+            self.primary_matched_keyword
+        )
+        if primary_matched_keyword and primary_matched_keyword not in matched_keywords:
+            matched_keywords.append(primary_matched_keyword)
+
+        self.keyword = normalized_keyword
+        self.matched_keywords = matched_keywords
+        self.primary_matched_keyword = (
+            primary_matched_keyword or matched_keywords[0] if matched_keywords else None
+        )
+
+    @property
+    def keyword_match_count(self) -> int:
+        return len(self.matched_keywords)
 
 
 @dataclass(slots=True)
@@ -123,3 +147,30 @@ class ScoredVideo:
     heat_score: float
     composite_score: float
     is_selected: bool = True
+
+
+def _normalize_candidate_keyword(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _normalize_matched_keywords(
+    values: list[str],
+    *,
+    fallback_keyword: str,
+) -> list[str]:
+    normalized_values: list[str] = []
+    seen: set[str] = set()
+    if fallback_keyword:
+        normalized_values.append(fallback_keyword)
+        seen.add(fallback_keyword)
+
+    for item in values:
+        normalized_item = _normalize_candidate_keyword(item)
+        if not normalized_item or normalized_item in seen:
+            continue
+        normalized_values.append(normalized_item)
+        seen.add(normalized_item)
+
+    return normalized_values

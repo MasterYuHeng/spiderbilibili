@@ -32,6 +32,12 @@ from app.schemas.task import (
     TaskVideoMetricsRead,
     TopicRepresentativeVideoRead,
 )
+from app.services.analysis_weight_service import (
+    build_metric_definitions,
+    build_metric_weight_configs,
+    calculate_metric_score,
+    resolve_metric_weight_map,
+)
 from app.services.popular_author_service import (
     PopularAuthorAnalysisResult,
     PopularAuthorAnalysisService,
@@ -106,16 +112,23 @@ class StatisticsService:
         session: Session,
         *,
         popular_author_service: PopularAuthorAnalysisService | None = None,
+        include_external_author_fetch: bool = True,
     ) -> None:
         self.session = session
         self.popular_author_service = popular_author_service
+        self.include_external_author_fetch = include_external_author_fetch
+        self._metric_weight_map = resolve_metric_weight_map(None)
 
     def calculate_task_statistics(self, task_id: str) -> TaskStatisticsResult:
         defaults = get_statistics_defaults(self.session)
         task = self.session.get(CrawlTask, task_id)
+        self._metric_weight_map = resolve_metric_weight_map(
+            task.extra_params if task is not None else None
+        )
         video_rows = self._load_video_rows(task_id)
         topic_rows = self._load_topic_rows(task_id)
         history_by_video_id = self._load_video_history(
+            task_id,
             [row.video.id for row in video_rows]
         )
         primary_topic_by_video_id = self._build_primary_topic_map(video_rows, topic_rows)
@@ -159,6 +172,8 @@ class StatisticsService:
             latest_hot_topic=latest_hot_topic,
         )
         data_notes = self._build_data_notes(video_insights)
+        metric_definitions = build_metric_definitions(self._metric_weight_map)
+        metric_weight_configs = build_metric_weight_configs(self._metric_weight_map)
         author_analysis = self._build_popular_author_analysis(
             task=task,
             video_insights=video_insights,
@@ -186,7 +201,8 @@ class StatisticsService:
             latest_hot_topic=latest_hot_topic,
             topic_insights=base_topic_insights,
             video_insights=video_insights,
-            metric_definitions=self._build_metric_definitions(),
+            metric_definitions=metric_definitions,
+            metric_weight_configs=metric_weight_configs,
             recommendations=recommendations,
             popular_authors=author_analysis.popular_authors,
             topic_hot_authors=author_analysis.topic_hot_authors,
@@ -277,6 +293,7 @@ class StatisticsService:
                 task,
                 video_insights=video_insights,
                 topic_insights=topic_insights,
+                fetch_author_videos=self.include_external_author_fetch,
             )
         finally:
             if owns_service:
@@ -372,6 +389,7 @@ class StatisticsService:
 
     def _load_video_history(
         self,
+        task_id: str,
         video_ids: list[str],
     ) -> dict[str, list[VideoMetricSnapshot]]:
         if not video_ids:
@@ -379,7 +397,10 @@ class StatisticsService:
 
         statement = (
             select(VideoMetricSnapshot)
-            .where(VideoMetricSnapshot.video_id.in_(video_ids))
+            .where(
+                VideoMetricSnapshot.task_id == task_id,
+                VideoMetricSnapshot.video_id.in_(video_ids),
+            )
             .order_by(
                 VideoMetricSnapshot.video_id.asc(),
                 VideoMetricSnapshot.captured_at.asc(),
@@ -685,65 +706,77 @@ class StatisticsService:
         insights: list[TaskAnalysisVideoInsightRead] = []
         for seed in seeds:
             burst_score = round(
-                (
-                    0.45
-                    * self._normalize_positive(
-                        seed.search_to_current_view_growth_ratio,
-                        maxima["search_growth"],
-                    )
-                    + 0.35
-                    * self._normalize_positive(
-                        seed.views_per_hour_since_publish,
-                        maxima["publish_velocity"],
-                    )
-                    + 0.20
-                    * self._normalize_positive(
-                        seed.historical_view_velocity_per_hour,
-                        maxima["history_velocity"],
-                    )
+                calculate_metric_score(
+                    "burst_score",
+                    {
+                        "search_growth": self._normalize_positive(
+                            seed.search_to_current_view_growth_ratio,
+                            maxima["search_growth"],
+                        ),
+                        "publish_velocity": self._normalize_positive(
+                            seed.views_per_hour_since_publish,
+                            maxima["publish_velocity"],
+                        ),
+                        "history_velocity": self._normalize_positive(
+                            seed.historical_view_velocity_per_hour,
+                            maxima["history_velocity"],
+                        ),
+                    },
+                    self._metric_weight_map["burst_score"],
                 ),
                 4,
             )
             depth_score = round(
-                (
-                    0.30
-                    * self._normalize_positive(seed.like_view_ratio, maxima["like_ratio"])
-                    + 0.20
-                    * self._normalize_positive(seed.coin_view_ratio, maxima["coin_ratio"])
-                    + 0.20
-                    * self._normalize_positive(
-                        seed.favorite_view_ratio,
-                        maxima["favorite_ratio"],
-                    )
-                    + 0.20
-                    * self._normalize_positive(
-                        seed.completion_proxy_score,
-                        maxima["completion_proxy"],
-                    )
-                    + 0.10
-                    * self._normalize_positive(
-                        seed.engagement_rate,
-                        maxima["engagement_rate"],
-                    )
+                calculate_metric_score(
+                    "depth_score",
+                    {
+                        "like_ratio": self._normalize_positive(
+                            seed.like_view_ratio,
+                            maxima["like_ratio"],
+                        ),
+                        "coin_ratio": self._normalize_positive(
+                            seed.coin_view_ratio,
+                            maxima["coin_ratio"],
+                        ),
+                        "favorite_ratio": self._normalize_positive(
+                            seed.favorite_view_ratio,
+                            maxima["favorite_ratio"],
+                        ),
+                        "completion_proxy_score": self._normalize_positive(
+                            seed.completion_proxy_score,
+                            maxima["completion_proxy"],
+                        ),
+                        "engagement_rate": self._normalize_positive(
+                            seed.engagement_rate,
+                            maxima["engagement_rate"],
+                        ),
+                    },
+                    self._metric_weight_map["depth_score"],
                 ),
                 4,
             )
             community_score = round(
-                (
-                    0.40
-                    * self._normalize_positive(seed.share_view_ratio, maxima["share_ratio"])
-                    + 0.25
-                    * self._normalize_positive(seed.reply_view_ratio, maxima["reply_ratio"])
-                    + 0.20
-                    * self._normalize_positive(
-                        seed.danmaku_view_ratio,
-                        maxima["danmaku_ratio"],
-                    )
-                    + 0.15
-                    * self._normalize_positive(
-                        seed.engagement_rate,
-                        maxima["engagement_rate"],
-                    )
+                calculate_metric_score(
+                    "community_score",
+                    {
+                        "share_ratio": self._normalize_positive(
+                            seed.share_view_ratio,
+                            maxima["share_ratio"],
+                        ),
+                        "reply_ratio": self._normalize_positive(
+                            seed.reply_view_ratio,
+                            maxima["reply_ratio"],
+                        ),
+                        "danmaku_ratio": self._normalize_positive(
+                            seed.danmaku_view_ratio,
+                            maxima["danmaku_ratio"],
+                        ),
+                        "engagement_rate": self._normalize_positive(
+                            seed.engagement_rate,
+                            maxima["engagement_rate"],
+                        ),
+                    },
+                    self._metric_weight_map["community_score"],
                 ),
                 4,
             )
@@ -989,9 +1022,15 @@ class StatisticsService:
                 )
                 total_heat_score = round(float(bucket_state["total_heat_score"]), 4)
                 topic_heat_index = round(
-                    total_heat_score
-                    + (average_burst_score or 0.0)
-                    + (average_community_score or 0.0),
+                    calculate_metric_score(
+                        "topic_heat_index",
+                        {
+                            "total_heat_score": total_heat_score,
+                            "average_burst_score": average_burst_score or 0.0,
+                            "average_community_score": average_community_score or 0.0,
+                        },
+                        self._metric_weight_map["topic_heat_index"],
+                    ),
                     4,
                 )
                 points.append(
@@ -1165,6 +1204,11 @@ class StatisticsService:
         historical_videos = sum(
             1 for item in video_insights if item.historical_snapshot_count > 1
         )
+        customized_metric_names = [
+            item.metric_name
+            for item in build_metric_weight_configs(self._metric_weight_map)
+            if item.customized
+        ]
         return [
             (
                 "实时在线人数和官方完播率当前未采集，页面中的完播相关内容使用互动深度代理指标，"
@@ -1182,78 +1226,16 @@ class StatisticsService:
                 "当前无法稳定采集视频自发布以来的官方全量播放/点赞时间序列，"
                 "爆发视频历史曲线基于搜索基线、当前快照和跨任务快照历史构建。"
             ),
+            (
+                "当前分析使用默认指标权重。"
+                if not customized_metric_names
+                else "当前分析启用了自定义指标权重："
+                f"{'、'.join(customized_metric_names)}。"
+            ),
         ]
 
     def _build_metric_definitions(self) -> list[TaskAnalysisMetricDefinitionRead]:
-        return [
-            TaskAnalysisMetricDefinitionRead(
-                key="burst_score",
-                name="爆发力",
-                category="增长动能",
-                meaning="衡量视频在当前观察窗口内的涨速和升温能力，适合追热点和判断是否继续发酵。",
-                formula=(
-                    "0.45 * 搜索初始播放到当前播放增长率归一化 + "
-                    "0.35 * 发布以来小时均播放归一化 + "
-                    "0.20 * 历史快照小时增速归一化"
-                ),
-                interpretation="分值越高，说明视频越可能处于快速放大阶段。",
-                limitations="当视频缺少搜索基线或历史快照时，部分分量会按 0 处理。",
-            ),
-            TaskAnalysisMetricDefinitionRead(
-                key="depth_score",
-                name="内容深度",
-                category="互动质量",
-                meaning="衡量用户是否愿意进一步点赞、投币、收藏和持续互动，适合判断内容是否值得深入看。",
-                formula=(
-                    "0.30 * 点赞率归一化 + 0.20 * 投币率归一化 + "
-                    "0.20 * 收藏率归一化 + 0.20 * 完播代理分归一化 + "
-                    "0.10 * 综合互动率归一化"
-                ),
-                interpretation="分值越高，说明内容不只是被看到，还更容易被认真消费和认可。",
-                limitations="完播代理分不是官方完播率，只是用收藏、投币、评论、弹幕等信号近似。",
-            ),
-            TaskAnalysisMetricDefinitionRead(
-                key="community_score",
-                name="社区扩散",
-                category="传播扩散",
-                meaning="衡量视频是否容易引发转发、讨论和弹幕互动，适合判断吃瓜传播和社区发酵能力。",
-                formula=(
-                    "0.40 * 分享率归一化 + 0.25 * 评论率归一化 + "
-                    "0.20 * 弹幕率归一化 + 0.15 * 综合互动率归一化"
-                ),
-                interpretation="分值越高，说明视频越容易在社区里形成讨论和二次传播。",
-                limitations="当前未采集私域传播和站外扩散，结果主要反映站内公开互动。",
-            ),
-            TaskAnalysisMetricDefinitionRead(
-                key="completion_proxy_score",
-                name="完播代理分",
-                category="互动质量",
-                meaning="用更重度的互动行为近似衡量观众是否看得更完整、更投入。",
-                formula=(
-                    "0.35 * 收藏率 + 0.30 * 投币率 + "
-                    "0.20 * 评论率 + 0.15 * 弹幕率"
-                ),
-                interpretation="分值越高，通常意味着视频更容易让观众停留并愿意给出深层反馈。",
-                limitations="这不是平台后台的真实完播率，仅适合横向比较和趋势观察。",
-            ),
-            TaskAnalysisMetricDefinitionRead(
-                key="engagement_rate",
-                name="综合互动率",
-                category="基础比率",
-                meaning="衡量每次播放平均能换来多少公开互动。",
-                formula="(点赞数 + 投币数 + 收藏数 + 分享数 + 评论数 + 弹幕数) / 播放数",
-                interpretation="分值越高，说明视频不只是被动曝光，而是更容易触发互动。",
-            ),
-            TaskAnalysisMetricDefinitionRead(
-                key="topic_heat_index",
-                name="主题热度指数",
-                category="主题演化",
-                meaning="用于观察某个主题在时间线上的综合热度变化。",
-                formula="主题总热度 + 当期平均爆发力 + 当期平均社区扩散",
-                interpretation="适合看某个主题是在升温、回落还是保持稳定。",
-                limitations="这是分析页的主题级综合指数，不等同于 B 站官方榜单口径。",
-            ),
-        ]
+        return build_metric_definitions(self._metric_weight_map)
 
     def _build_keyword_cooccurrence(
         self,
@@ -1364,23 +1346,30 @@ class StatisticsService:
     ) -> int:
         return int(getattr(metric_snapshot, metric_name, 0) or 0)
 
-    @classmethod
     def _calculate_engagement_rate(
-        cls,
+        self,
         metrics: VideoMetricSnapshot | TaskVideoMetricsRead | None,
     ) -> float:
-        view_count = cls._metric_value(metrics, "view_count")
+        view_count = self._metric_value(metrics, "view_count")
         if view_count <= 0:
             return 0.0
-        total_interactions = (
-            cls._metric_value(metrics, "like_count")
-            + cls._metric_value(metrics, "coin_count")
-            + cls._metric_value(metrics, "favorite_count")
-            + cls._metric_value(metrics, "share_count")
-            + cls._metric_value(metrics, "reply_count")
-            + cls._metric_value(metrics, "danmaku_count")
+        return round(
+            calculate_metric_score(
+                "engagement_rate",
+                {
+                    "like_ratio": self._calculate_ratio(metrics, "like_count") or 0.0,
+                    "coin_ratio": self._calculate_ratio(metrics, "coin_count") or 0.0,
+                    "favorite_ratio": self._calculate_ratio(metrics, "favorite_count")
+                    or 0.0,
+                    "share_ratio": self._calculate_ratio(metrics, "share_count") or 0.0,
+                    "reply_ratio": self._calculate_ratio(metrics, "reply_count") or 0.0,
+                    "danmaku_ratio": self._calculate_ratio(metrics, "danmaku_count")
+                    or 0.0,
+                },
+                self._metric_weight_map["engagement_rate"],
+            ),
+            6,
         )
-        return round(total_interactions / view_count, 6)
 
     @classmethod
     def _calculate_ratio(
@@ -1472,8 +1461,8 @@ class StatisticsService:
             return None
         return round((end.view_count - start.view_count) / hours, 4)
 
-    @staticmethod
     def _calculate_completion_proxy_score(
+        self,
         *,
         favorite_view_ratio: float | None,
         coin_view_ratio: float | None,
@@ -1489,7 +1478,16 @@ class StatisticsService:
         if not any(values):
             return None
         return round(
-            0.35 * values[0] + 0.30 * values[1] + 0.20 * values[2] + 0.15 * values[3],
+            calculate_metric_score(
+                "completion_proxy_score",
+                {
+                    "favorite_ratio": values[0],
+                    "coin_ratio": values[1],
+                    "reply_ratio": values[2],
+                    "danmaku_ratio": values[3],
+                },
+                self._metric_weight_map["completion_proxy_score"],
+            ),
             6,
         )
 

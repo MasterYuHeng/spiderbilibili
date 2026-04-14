@@ -19,6 +19,17 @@
       :current-stage="taskProgress.current_stage"
     />
 
+    <TaskSearchContextCard
+      v-if="taskProgress"
+      :task-keyword="taskProgress.keyword_expansion?.source_keyword ?? workspaceStore.currentTaskLabel"
+      :keyword-expansion="taskProgress.keyword_expansion"
+      :search-keywords-used="taskProgress.search_keywords_used"
+      :expanded-keyword-count="taskProgress.expanded_keyword_count"
+      :crawl-mode="taskCrawlMode"
+      title="分析样本搜索口径"
+      description="UP 主分析不会按同义词拆成多份，但这里会说明当前热门创作者提取和二次抓取基于哪些搜索词召回的样本。"
+    />
+
     <section class="stats-grid">
       <StatCard label="热门 UP 主" :value="formatNumber(popularAuthors.length)" />
       <StatCard label="近期活跃" :value="formatNumber(recentlyActiveCount)" />
@@ -323,6 +334,7 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import InsightText from '@/components/common/InsightText.vue'
 import StatCard from '@/components/common/StatCard.vue'
 import TaskLifecycleNotice from '@/components/tasks/TaskLifecycleNotice.vue'
+import TaskSearchContextCard from '@/components/tasks/TaskSearchContextCard.vue'
 import { useTaskWorkspaceStore } from '@/stores/taskWorkspace'
 import {
   formatCompactNumber,
@@ -369,6 +381,9 @@ const taskOptions = computed<Record<string, unknown>>(() => {
   const raw = extraParams.task_options
   return raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
 })
+const taskCrawlMode = computed<'keyword' | 'hot'>(() =>
+  String(taskOptions.value.crawl_mode || 'keyword') === 'hot' ? 'hot' : 'keyword',
+)
 const taskScopeLabel = computed(() => {
   if (String(taskOptions.value.search_scope || 'site') === 'partition') {
     return String(taskOptions.value.partition_name || taskOptions.value.partition_tid || '指定分区')

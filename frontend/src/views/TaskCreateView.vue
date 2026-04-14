@@ -16,7 +16,12 @@
       >
         <div class="task-form__grid">
           <el-form-item label="抓取方式" prop="crawl_mode">
-            <el-select v-model="form.crawl_mode" placeholder="选择抓取方式" :clearable="false">
+            <el-select
+              v-model="form.crawl_mode"
+              data-testid="crawl-mode-select"
+              placeholder="选择抓取方式"
+              :clearable="false"
+            >
               <el-option label="关键词抓取" value="keyword" />
               <el-option label="当前热榜抓取" value="hot" />
             </el-select>
@@ -26,7 +31,12 @@
           </el-form-item>
 
           <el-form-item label="抓取范围" prop="search_scope">
-            <el-select v-model="form.search_scope" placeholder="选择范围" :clearable="false">
+            <el-select
+              v-model="form.search_scope"
+              data-testid="search-scope-select"
+              placeholder="选择范围"
+              :clearable="false"
+            >
               <el-option label="B 站全站" value="site" />
               <el-option label="固定分区" value="partition" />
             </el-select>
@@ -36,7 +46,7 @@
           </el-form-item>
 
           <el-form-item
-            v-if="form.crawl_mode === 'keyword'"
+            v-if="isKeywordMode"
             label="搜索关键词"
             prop="keyword"
           >
@@ -51,19 +61,59 @@
             </small>
           </el-form-item>
 
+          <template v-if="isKeywordMode">
+            <el-form-item label="关键词同义补充">
+              <el-switch
+                v-model="keywordExpansionEnabled"
+                data-testid="keyword-expansion-switch"
+              />
+              <small class="task-form__field-hint">
+                只增强搜索召回范围，不会把后续分析拆成多条任务链路。
+              </small>
+            </el-form-item>
+
+            <el-form-item
+              v-if="keywordExpansionEnabled"
+              label="补充个数"
+              prop="keyword_synonym_count"
+            >
+              <el-select
+                v-model="form.keyword_synonym_count"
+                data-testid="keyword-expansion-count"
+                placeholder="选择补充个数"
+                :clearable="false"
+              >
+                <el-option
+                  v-for="count in keywordSynonymCountOptions"
+                  :key="count"
+                  :label="`补充 ${count} 个同义词`"
+                  :value="count"
+                />
+              </el-select>
+              <small class="task-form__field-hint">
+                例如搜索“和平精英”并补充 1 个同义词，后续会按“和平精英 + 吃鸡”共同搜索，再统一去重进入原链路。
+              </small>
+            </el-form-item>
+          </template>
+
           <div v-else class="task-form__info-card">
-            <strong>当前模式不需要输入关键词</strong>
+            <strong>当前模式无需输入关键词</strong>
             <p>
               系统会直接抓取 {{ scopeLabel }} 下的热门视频，并继续做主题、热门 UP 主和内容特点分析。
             </p>
           </div>
 
           <el-form-item
-            v-if="form.search_scope === 'partition'"
+            v-if="isPartitionScope"
             label="固定分区"
             prop="partition_tid"
           >
-            <el-select v-model="form.partition_tid" placeholder="选择分区" filterable>
+            <el-select
+              v-model="form.partition_tid"
+              data-testid="partition-select"
+              placeholder="选择分区"
+              filterable
+            >
               <el-option
                 v-for="item in partitionOptions"
                 :key="item.tid"
@@ -85,7 +135,7 @@
               v-model="form.max_pages"
               :min="1"
               :step="1"
-              :disabled="form.crawl_mode === 'hot' && form.search_scope === 'partition'"
+              :disabled="isHotPartitionMode"
             />
             <small class="task-form__field-hint">
               控制向前翻多少页找候选视频；分区热榜模式下会自动固定为 1。
@@ -93,16 +143,34 @@
           </el-form-item>
 
           <el-form-item label="发布时间限制">
-            <el-select v-model="form.published_within_days" clearable placeholder="不限发布时间">
+            <el-select
+              v-model="publishedWithinMode"
+              data-testid="published-within-select"
+              clearable
+              placeholder="不限发布时间"
+            >
               <el-option
                 v-for="option in publishedWithinOptions"
                 :key="option.value"
                 :label="option.label"
                 :value="option.value"
               />
+              <el-option
+                :label="publishedWithinCustomOption.label"
+                :value="publishedWithinCustomOption.value"
+              />
             </el-select>
+            <el-input-number
+              v-if="isCustomPublishedWithinMode"
+              v-model="publishedWithinCustomDays"
+              data-testid="published-within-custom-input"
+              :min="1"
+              :max="3650"
+              :step="1"
+              class="task-form__inline-number"
+            />
             <small class="task-form__field-hint">
-              只保留最近一段时间发布的视频，适合做阶段性热点追踪。
+              只保留最近一段时间发布的视频；除了常用预设，也可以自定义最近多少天。
             </small>
           </el-form-item>
 
@@ -157,17 +225,23 @@
           <div v-if="advancedOpen" class="task-form__advanced-grid">
             <el-form-item label="启用代理">
               <el-switch v-model="proxyEnabled" />
-              <small class="task-form__field-hint">网络不稳定或触发限流时再开启。</small>
+              <small class="task-form__field-hint">
+                网络不稳定或触发限流时再开启。
+              </small>
             </el-form-item>
 
             <el-form-item label="最小休眠秒数">
               <el-input-number v-model="form.min_sleep_seconds" :min="0.1" :step="0.1" />
-              <small class="task-form__field-hint">每次请求之间的最短等待时间。</small>
+              <small class="task-form__field-hint">
+                每次请求之间的最短等待时间。
+              </small>
             </el-form-item>
 
             <el-form-item label="最大休眠秒数">
               <el-input-number v-model="form.max_sleep_seconds" :min="0.1" :step="0.1" />
-              <small class="task-form__field-hint">系统会在该区间内随机等待。</small>
+              <small class="task-form__field-hint">
+                系统会在该区间内随机等待。
+              </small>
             </el-form-item>
 
             <el-form-item v-if="form.enable_proxy" label="代理策略">
@@ -183,14 +257,21 @@
                   :value="item.value"
                 />
               </el-select>
-              <small class="task-form__field-hint">一般保持默认即可。</small>
+              <small class="task-form__field-hint">
+                一般保持默认即可。
+              </small>
             </el-form-item>
           </div>
         </section>
 
         <div class="task-form__actions">
           <el-button @click="resetForm">重置</el-button>
-          <el-button type="primary" :loading="submitting" @click="handleSubmit">
+          <el-button
+            type="primary"
+            data-testid="submit-button"
+            :loading="submitting"
+            @click="handleSubmit"
+          >
             创建任务
           </el-button>
         </div>
@@ -226,7 +307,7 @@ const partitionOptions = [
   { tid: 155, label: '时尚区' },
   { tid: 5, label: '娱乐区' },
   { tid: 181, label: '影视区' },
-]
+] as const
 
 const publishedWithinOptions = [
   { label: '最近 1 天', value: 1 },
@@ -234,7 +315,77 @@ const publishedWithinOptions = [
   { label: '最近 7 天', value: 7 },
   { label: '最近 30 天', value: 30 },
   { label: '最近 90 天', value: 90 },
-]
+] as const
+const publishedWithinCustomOption = {
+  label: '自定义最近天数',
+  value: 'custom',
+} as const
+
+const keywordSynonymCountOptions = [1, 2, 3, 5] as const
+type KeywordSynonymCount = (typeof keywordSynonymCountOptions)[number]
+const allowedKeywordSynonymCounts = new Set<KeywordSynonymCount>(keywordSynonymCountOptions)
+type PublishedWithinPresetValue = (typeof publishedWithinOptions)[number]['value']
+type PublishedWithinMode =
+  | PublishedWithinPresetValue
+  | typeof publishedWithinCustomOption.value
+  | null
+const allowedPublishedWithinPresetValues = new Set<PublishedWithinPresetValue>(
+  publishedWithinOptions.map((item) => item.value),
+)
+const partitionLabelByTid = new Map<number, string>(
+  partitionOptions.map((item) => [item.tid, item.label]),
+)
+
+function createDefaultForm(): TaskCreateRequest {
+  return {
+    keyword: '',
+    crawl_mode: 'keyword',
+    search_scope: 'site',
+    partition_tid: null,
+    partition_name: null,
+    published_within_days: null,
+    requested_video_limit: 50,
+    max_pages: 5,
+    hot_author_total_count: 5,
+    topic_hot_author_count: 1,
+    hot_author_video_limit: 10,
+    hot_author_summary_basis: 'time',
+    enable_proxy: false,
+    min_sleep_seconds: 1,
+    max_sleep_seconds: 3,
+    source_ip_strategy: 'local_sleep',
+    enable_keyword_synonym_expansion: false,
+    keyword_synonym_count: null,
+  }
+}
+
+function resolvePartitionName(tid: number | null | undefined): string | null {
+  if (!tid) {
+    return null
+  }
+  return partitionLabelByTid.get(tid) ?? null
+}
+
+function normalizeKeywordSynonymCount(value: unknown): KeywordSynonymCount | null {
+  const numericValue = Number(value)
+  if (!Number.isInteger(numericValue)) {
+    return null
+  }
+  return allowedKeywordSynonymCounts.has(numericValue as KeywordSynonymCount)
+    ? (numericValue as KeywordSynonymCount)
+    : null
+}
+
+function normalizePublishedWithinDays(value: unknown): number | null {
+  const numericValue = Number(value)
+  if (!Number.isInteger(numericValue)) {
+    return null
+  }
+  if (numericValue < 1 || numericValue > 3650) {
+    return null
+  }
+  return numericValue
+}
 
 const router = useRouter()
 const workspaceStore = useTaskWorkspaceStore()
@@ -242,23 +393,48 @@ const formRef = ref<FormInstance>()
 const submitting = ref(false)
 const advancedOpen = ref(false)
 
-const form = reactive<TaskCreateRequest>({
-  keyword: '',
-  crawl_mode: 'keyword',
-  search_scope: 'site',
-  partition_tid: null,
-  partition_name: null,
-  published_within_days: null,
-  requested_video_limit: 50,
-  max_pages: 5,
-  hot_author_total_count: 5,
-  topic_hot_author_count: 1,
-  hot_author_video_limit: 10,
-  hot_author_summary_basis: 'time',
-  enable_proxy: false,
-  min_sleep_seconds: 1,
-  max_sleep_seconds: 3,
-  source_ip_strategy: 'local_sleep',
+const form = reactive<TaskCreateRequest>(createDefaultForm())
+
+const isKeywordMode = computed(() => form.crawl_mode === 'keyword')
+const isPartitionScope = computed(() => form.search_scope === 'partition')
+const isHotPartitionMode = computed(() => form.crawl_mode === 'hot' && form.search_scope === 'partition')
+const publishedWithinMode = computed<PublishedWithinMode>({
+  get: () => {
+    const normalizedDays = normalizePublishedWithinDays(form.published_within_days)
+    if (normalizedDays === null) {
+      return null
+    }
+    return allowedPublishedWithinPresetValues.has(normalizedDays as PublishedWithinPresetValue)
+      ? (normalizedDays as PublishedWithinPresetValue)
+      : publishedWithinCustomOption.value
+  },
+  set: (value) => {
+    if (value === null) {
+      form.published_within_days = null
+      return
+    }
+    if (value === publishedWithinCustomOption.value) {
+      form.published_within_days = normalizePublishedWithinDays(form.published_within_days) ?? 14
+      return
+    }
+    form.published_within_days = value
+  },
+})
+const isCustomPublishedWithinMode = computed(
+  () => publishedWithinMode.value === publishedWithinCustomOption.value,
+)
+const publishedWithinCustomDays = computed<number | null>({
+  get: () => normalizePublishedWithinDays(form.published_within_days) ?? 14,
+  set: (value) => {
+    form.published_within_days = normalizePublishedWithinDays(value)
+  },
+})
+
+const keywordExpansionEnabled = computed({
+  get: () => Boolean(form.enable_keyword_synonym_expansion),
+  set: (value: boolean) => {
+    form.enable_keyword_synonym_expansion = value
+  },
 })
 
 const proxyEnabled = computed({
@@ -278,13 +454,9 @@ const availableIpStrategies = computed(() =>
     : [{ label: '本机节流', value: 'local_sleep' }],
 )
 
-const selectedPartition = computed(
-  () => partitionOptions.find((item) => item.tid === form.partition_tid) ?? null,
-)
-
 const scopeLabel = computed(() => {
-  if (form.search_scope === 'partition') {
-    return selectedPartition.value?.label ?? '指定分区'
+  if (isPartitionScope.value) {
+    return resolvePartitionName(form.partition_tid) ?? '指定分区'
   }
   return 'B 站全站'
 })
@@ -293,7 +465,7 @@ const rules: FormRules<TaskCreateRequest> = {
   keyword: [
     {
       validator: (_rule, value, callback) => {
-        if (form.crawl_mode === 'keyword' && !String(value ?? '').trim()) {
+        if (isKeywordMode.value && !String(value ?? '').trim()) {
           callback(new Error('关键词抓取模式下请输入搜索关键词'))
           return
         }
@@ -305,8 +477,40 @@ const rules: FormRules<TaskCreateRequest> = {
   partition_tid: [
     {
       validator: (_rule, value, callback) => {
-        if (form.search_scope === 'partition' && !value) {
+        if (isPartitionScope.value && !value) {
           callback(new Error('固定分区模式下请选择一个分区'))
+          return
+        }
+        callback()
+      },
+      trigger: 'change',
+    },
+  ],
+  published_within_days: [
+    {
+      validator: (_rule, value, callback) => {
+        if (!isCustomPublishedWithinMode.value) {
+          callback()
+          return
+        }
+        if (normalizePublishedWithinDays(value) === null) {
+          callback(new Error('自定义发布时间限制需填写 1 到 3650 之间的整数天数'))
+          return
+        }
+        callback()
+      },
+      trigger: 'change',
+    },
+  ],
+  keyword_synonym_count: [
+    {
+      validator: (_rule, value, callback) => {
+        if (!isKeywordMode.value || !keywordExpansionEnabled.value) {
+          callback()
+          return
+        }
+        if (!normalizeKeywordSynonymCount(value)) {
+          callback(new Error('补充个数仅允许 1、2、3、5'))
           return
         }
         callback()
@@ -317,23 +521,33 @@ const rules: FormRules<TaskCreateRequest> = {
 }
 
 function resetForm() {
-  form.keyword = ''
-  form.crawl_mode = 'keyword'
-  form.search_scope = 'site'
-  form.partition_tid = null
-  form.partition_name = null
-  form.published_within_days = null
-  form.requested_video_limit = 50
-  form.max_pages = 5
-  form.hot_author_total_count = 5
-  form.topic_hot_author_count = 1
-  form.hot_author_video_limit = 10
-  form.hot_author_summary_basis = 'time'
-  form.enable_proxy = false
-  form.min_sleep_seconds = 1
-  form.max_sleep_seconds = 3
-  form.source_ip_strategy = 'local_sleep'
+  Object.assign(form, createDefaultForm())
   advancedOpen.value = false
+  formRef.value?.clearValidate()
+}
+
+function buildCreateTaskPayload(): TaskCreateRequest {
+  const normalizedKeyword = isKeywordMode.value ? form.keyword.trim() : ''
+  const normalizedPartitionName = isPartitionScope.value
+    ? resolvePartitionName(form.partition_tid)
+    : null
+  const publishedWithinDays = normalizePublishedWithinDays(form.published_within_days)
+  const enableKeywordSynonymExpansion = isKeywordMode.value
+    ? Boolean(form.enable_keyword_synonym_expansion)
+    : false
+  const keywordSynonymCount = enableKeywordSynonymExpansion
+    ? (normalizeKeywordSynonymCount(form.keyword_synonym_count) ?? 1)
+    : null
+
+  return {
+    ...form,
+    keyword: normalizedKeyword,
+    partition_name: normalizedPartitionName,
+    published_within_days: publishedWithinDays,
+    max_pages: isHotPartitionMode.value ? 1 : form.max_pages,
+    enable_keyword_synonym_expansion: enableKeywordSynonymExpansion,
+    keyword_synonym_count: keywordSynonymCount,
+  }
 }
 
 watch(
@@ -358,7 +572,7 @@ watch(
 watch(
   () => form.partition_tid,
   (tid) => {
-    form.partition_name = partitionOptions.find((item) => item.tid === tid)?.label ?? null
+    form.partition_name = resolvePartitionName(tid) ?? null
   },
 )
 
@@ -367,7 +581,29 @@ watch(
   (mode) => {
     if (mode === 'hot') {
       form.keyword = ''
+      form.enable_keyword_synonym_expansion = false
+      form.keyword_synonym_count = null
+      return
     }
+
+    if (form.enable_keyword_synonym_expansion) {
+      form.keyword_synonym_count = normalizeKeywordSynonymCount(form.keyword_synonym_count) ?? 1
+    }
+  },
+)
+
+watch(
+  () => form.enable_keyword_synonym_expansion,
+  (enabled) => {
+    if (!isKeywordMode.value) {
+      form.enable_keyword_synonym_expansion = false
+      form.keyword_synonym_count = null
+      return
+    }
+
+    form.keyword_synonym_count = enabled
+      ? (normalizeKeywordSynonymCount(form.keyword_synonym_count) ?? 1)
+      : null
   },
 )
 
@@ -394,20 +630,8 @@ async function handleSubmit() {
   }
 
   submitting.value = true
-
   try {
-    const payload = await createTask({
-      ...form,
-      keyword: form.crawl_mode === 'keyword' ? form.keyword.trim() : '',
-      partition_name:
-        form.search_scope === 'partition'
-          ? partitionOptions.find((item) => item.tid === form.partition_tid)?.label ?? null
-          : null,
-      max_pages:
-        form.crawl_mode === 'hot' && form.search_scope === 'partition'
-          ? 1
-          : form.max_pages,
-    })
+    const payload = await createTask(buildCreateTaskPayload())
     workspaceStore.setCurrentTaskContext(payload.task.id, payload.task.keyword)
     ElMessage.success('任务已创建，正在跳转详情页。')
     await router.push(`/tasks/${payload.task.id}`)
@@ -482,6 +706,10 @@ async function handleSubmit() {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.task-form__inline-number {
+  margin-top: 12px;
 }
 
 @media (max-width: 900px) {

@@ -16,6 +16,7 @@ from app.models.base import utc_now
 from app.models.enums import LogLevel, TaskStage, TaskStatus
 from app.models.task import CrawlTask
 from app.schemas.task import (
+    KeywordExpansionRead,
     TaskBulkDeletePayload,
     TaskCreateRequest,
     TaskDeletePayload,
@@ -43,6 +44,13 @@ ACTIVE_TASK_STATUSES = {
     TaskStatus.QUEUED,
     TaskStatus.RUNNING,
 }
+KEYWORD_EXPANSION_ALLOWED_STATUSES = {
+    "skipped",
+    "pending",
+    "success",
+    "fallback",
+    "failed",
+}
 LIST_RUNTIME_STATE_CACHE_SECONDS = 5
 _runtime_state_resolver_cache: tuple[datetime, RuntimeStateResolver] | None = None
 
@@ -68,6 +76,7 @@ def create_crawl_task(
     payload: TaskCreateRequest,
 ) -> tuple[TaskDetail, TaskDispatchRead]:
     resolved_values = resolve_task_create_payload(session, payload)
+    task_options = _build_task_options_payload(resolved_values)
     task = CrawlTask(
         keyword=resolved_values["keyword"],
         status=TaskStatus.PENDING,
@@ -78,21 +87,11 @@ def create_crawl_task(
         enable_proxy=resolved_values["enable_proxy"],
         source_ip_strategy=resolved_values["source_ip_strategy"],
         extra_params={
-            "task_options": {
-                "crawl_mode": resolved_values["crawl_mode"],
-                "search_scope": resolved_values["search_scope"],
-                "partition_tid": resolved_values["partition_tid"],
-                "partition_name": resolved_values["partition_name"],
-                "published_within_days": resolved_values["published_within_days"],
-                "requested_video_limit": resolved_values["requested_video_limit"],
-                "max_pages": resolved_values["max_pages"],
-                "hot_author_total_count": resolved_values["hot_author_total_count"],
-                "topic_hot_author_count": resolved_values["topic_hot_author_count"],
-                "hot_author_video_limit": resolved_values["hot_author_video_limit"],
-                "hot_author_summary_basis": resolved_values["hot_author_summary_basis"],
-                "enable_proxy": resolved_values["enable_proxy"],
-                "source_ip_strategy": resolved_values["source_ip_strategy"],
-            }
+            "task_options": task_options,
+            "keyword_expansion": _build_initial_keyword_expansion_payload(
+                source_keyword=resolved_values["keyword"],
+                task_options=task_options,
+            ),
         },
     )
     session.add(task)
@@ -114,6 +113,10 @@ def create_crawl_task(
             "topic_hot_author_count": resolved_values["topic_hot_author_count"],
             "hot_author_video_limit": resolved_values["hot_author_video_limit"],
             "hot_author_summary_basis": resolved_values["hot_author_summary_basis"],
+            "enable_keyword_synonym_expansion": resolved_values[
+                "enable_keyword_synonym_expansion"
+            ],
+            "keyword_synonym_count": resolved_values["keyword_synonym_count"],
         },
     )
     dispatch_generation = _advance_dispatch_generation(task)
@@ -289,6 +292,7 @@ def get_task_progress(session: Session, task_id: str) -> TaskProgressPayload:
     task = reconcile_task_runtime_state(session, task)
     latest_log = get_latest_task_log(session, task.id)
     current_stage = _resolve_display_stage(task, latest_log)
+    keyword_expansion = build_task_keyword_expansion_read(task)
 
     return TaskProgressPayload(
         task_id=task.id,
@@ -303,6 +307,15 @@ def get_task_progress(session: Session, task_id: str) -> TaskProgressPayload:
         finished_at=task.finished_at,
         error_message=task.error_message,
         extra_params=task.extra_params,
+        keyword_expansion=keyword_expansion,
+        search_keywords_used=resolve_task_search_keywords_used(
+            task,
+            keyword_expansion=keyword_expansion,
+        ),
+        expanded_keyword_count=resolve_task_expanded_keyword_count(
+            task,
+            keyword_expansion=keyword_expansion,
+        ),
         latest_log=build_task_log_read(latest_log) if latest_log is not None else None,
     )
 
@@ -425,6 +438,14 @@ def resolve_task_create_payload(
     partition_tid = payload.partition_tid if search_scope == "partition" else None
     partition_name = payload.partition_name if search_scope == "partition" else None
     published_within_days = payload.published_within_days
+    enable_keyword_synonym_expansion = bool(
+        payload.enable_keyword_synonym_expansion
+    )
+    keyword_synonym_count = (
+        int(payload.keyword_synonym_count)
+        if payload.keyword_synonym_count is not None
+        else None
+    )
 
     if requested_video_limit > settings.crawler_max_videos:
         raise ValidationError(
@@ -470,6 +491,8 @@ def resolve_task_create_payload(
         "source_ip_strategy": source_ip_strategy,
         "min_sleep_seconds": quantize_decimal(min_sleep_seconds),
         "max_sleep_seconds": quantize_decimal(max_sleep_seconds),
+        "enable_keyword_synonym_expansion": enable_keyword_synonym_expansion,
+        "keyword_synonym_count": keyword_synonym_count,
     }
 
 
@@ -546,7 +569,13 @@ def retry_crawl_task(
             },
         )
 
-    task_options = dict((source_task.extra_params or {}).get("task_options", {}))
+    source_extra_params = (
+        source_task.extra_params if isinstance(source_task.extra_params, dict) else {}
+    )
+    task_options = _build_task_options_payload(
+        dict(source_extra_params.get("task_options", {})),
+        fallback_task=source_task,
+    )
     new_task = CrawlTask(
         keyword=source_task.keyword,
         status=TaskStatus.PENDING,
@@ -557,42 +586,12 @@ def retry_crawl_task(
         enable_proxy=source_task.enable_proxy,
         source_ip_strategy=source_task.source_ip_strategy,
         extra_params={
-            "task_options": {
-                "crawl_mode": task_options.get("crawl_mode", "keyword"),
-                "search_scope": task_options.get("search_scope", "site"),
-                "partition_tid": task_options.get("partition_tid"),
-                "partition_name": task_options.get("partition_name"),
-                "published_within_days": task_options.get("published_within_days"),
-                "requested_video_limit": task_options.get(
-                    "requested_video_limit",
-                    source_task.requested_video_limit,
-                ),
-                "max_pages": task_options.get("max_pages", source_task.max_pages),
-                "hot_author_total_count": task_options.get(
-                    "hot_author_total_count",
-                    0,
-                ),
-                "topic_hot_author_count": task_options.get(
-                    "topic_hot_author_count",
-                    0,
-                ),
-                "hot_author_video_limit": task_options.get(
-                    "hot_author_video_limit",
-                    10,
-                ),
-                "hot_author_summary_basis": task_options.get(
-                    "hot_author_summary_basis",
-                    "time",
-                ),
-                "enable_proxy": task_options.get(
-                    "enable_proxy",
-                    source_task.enable_proxy,
-                ),
-                "source_ip_strategy": task_options.get(
-                    "source_ip_strategy",
-                    source_task.source_ip_strategy,
-                ),
-            },
+            "task_options": task_options,
+            "keyword_expansion": _build_retry_keyword_expansion_payload(
+                source_keyword=source_task.keyword,
+                task_options=task_options,
+                source_keyword_expansion=source_extra_params.get("keyword_expansion"),
+            ),
             "retry_context": {
                 "retry_of_task_id": source_task.id,
                 "retry_of_status": source_task.status.value,
@@ -1417,9 +1416,19 @@ def build_task_detail(
 ) -> TaskDetail:
     summary = build_task_summary(task)
     latest_log = logs[-1] if logs else None
+    keyword_expansion = build_task_keyword_expansion_read(task)
     return TaskDetail(
         **summary.model_dump(),
         extra_params=task.extra_params,
+        keyword_expansion=keyword_expansion,
+        search_keywords_used=resolve_task_search_keywords_used(
+            task,
+            keyword_expansion=keyword_expansion,
+        ),
+        expanded_keyword_count=resolve_task_expanded_keyword_count(
+            task,
+            keyword_expansion=keyword_expansion,
+        ),
         current_stage=_resolve_display_stage(task, latest_log),
         progress_percent=calculate_task_progress(task),
         log_total=log_total,
@@ -1448,3 +1457,303 @@ def _merge_dispatch_metadata(
     current_dispatch.update(dispatch_payload)
     merged["dispatch"] = current_dispatch
     return merged
+
+
+def _build_task_options_payload(
+    values: dict[str, Any],
+    *,
+    fallback_task: CrawlTask | None = None,
+) -> dict[str, Any]:
+    return {
+        "crawl_mode": str(values.get("crawl_mode") or "keyword"),
+        "search_scope": str(values.get("search_scope") or "site"),
+        "partition_tid": values.get("partition_tid"),
+        "partition_name": values.get("partition_name"),
+        "published_within_days": values.get("published_within_days"),
+        "requested_video_limit": int(
+            values.get("requested_video_limit")
+            or (fallback_task.requested_video_limit if fallback_task is not None else 0)
+        ),
+        "max_pages": int(
+            values.get("max_pages")
+            or (fallback_task.max_pages if fallback_task is not None else 0)
+        ),
+        "hot_author_total_count": int(values.get("hot_author_total_count") or 0),
+        "topic_hot_author_count": int(values.get("topic_hot_author_count") or 0),
+        "hot_author_video_limit": int(values.get("hot_author_video_limit") or 10),
+        "hot_author_summary_basis": str(
+            values.get("hot_author_summary_basis") or "time"
+        ),
+        "enable_proxy": bool(
+            values.get("enable_proxy")
+            if values.get("enable_proxy") is not None
+            else (fallback_task.enable_proxy if fallback_task is not None else False)
+        ),
+        "source_ip_strategy": str(
+            values.get("source_ip_strategy")
+            or (
+                fallback_task.source_ip_strategy
+                if fallback_task is not None
+                else "local_sleep"
+            )
+        ),
+        "enable_keyword_synonym_expansion": bool(
+            values.get("enable_keyword_synonym_expansion", False)
+        ),
+        "keyword_synonym_count": _coerce_optional_int(
+            values.get("keyword_synonym_count")
+        ),
+    }
+
+
+def _build_initial_keyword_expansion_payload(
+    *,
+    source_keyword: str,
+    task_options: dict[str, Any],
+) -> dict[str, Any]:
+    enabled = bool(task_options.get("enable_keyword_synonym_expansion", False))
+    return _build_keyword_expansion_payload(
+        source_keyword=source_keyword,
+        enabled=enabled,
+        requested_synonym_count=_coerce_optional_int(
+            task_options.get("keyword_synonym_count")
+        ),
+        status="pending" if enabled else "skipped",
+    )
+
+
+def build_task_keyword_expansion_read(task: CrawlTask) -> KeywordExpansionRead:
+    extra_params = _get_task_extra_params(task)
+    task_options = _get_nested_dict(extra_params, "task_options")
+    keyword_expansion = _get_nested_dict(extra_params, "keyword_expansion")
+    source_keyword = _normalize_keyword(
+        keyword_expansion.get("source_keyword") or task.keyword
+    )
+    enabled = bool(
+        keyword_expansion.get("enabled")
+        if "enabled" in keyword_expansion
+        else task_options.get("enable_keyword_synonym_expansion", False)
+    )
+    requested_synonym_count = _coerce_optional_int(
+        keyword_expansion.get("requested_synonym_count")
+    )
+    if requested_synonym_count is None:
+        requested_synonym_count = _coerce_optional_int(
+            task_options.get("keyword_synonym_count")
+        )
+
+    normalized_payload = _build_keyword_expansion_payload(
+        source_keyword=source_keyword,
+        enabled=enabled,
+        requested_synonym_count=requested_synonym_count,
+        status=(
+            _normalize_optional_string(keyword_expansion.get("status"))
+            or ("pending" if enabled else "skipped")
+        ),
+        generated_synonyms=_normalize_keyword_list(
+            keyword_expansion.get("generated_synonyms")
+        ),
+        model_name=_normalize_optional_string(keyword_expansion.get("model_name")),
+        error_message=_normalize_optional_string(
+            keyword_expansion.get("error_message")
+        ),
+        generated_at=_normalize_optional_string(keyword_expansion.get("generated_at")),
+    )
+    return KeywordExpansionRead.model_validate(normalized_payload)
+
+
+def resolve_task_search_keywords_used(
+    task: CrawlTask,
+    *,
+    keyword_expansion: KeywordExpansionRead | None = None,
+) -> list[str]:
+    extra_params = _get_task_extra_params(task)
+    task_options = _get_nested_dict(extra_params, "task_options")
+    crawl_mode = str(task_options.get("crawl_mode") or "keyword").strip().lower()
+    if crawl_mode == "hot":
+        return []
+
+    crawl_stats = _get_nested_dict(extra_params, "crawl_stats")
+    search_keywords_used = _normalize_keyword_list(crawl_stats.get("search_keywords_used"))
+    if search_keywords_used:
+        return search_keywords_used
+
+    expansion = keyword_expansion or build_task_keyword_expansion_read(task)
+    fallback_keywords = _normalize_keyword_list(expansion.expanded_keywords)
+    if fallback_keywords:
+        return fallback_keywords
+
+    normalized_keyword = _normalize_keyword(task.keyword)
+    return [normalized_keyword] if normalized_keyword else []
+
+
+def resolve_task_expanded_keyword_count(
+    task: CrawlTask,
+    *,
+    keyword_expansion: KeywordExpansionRead | None = None,
+) -> int:
+    extra_params = _get_task_extra_params(task)
+    crawl_stats = _get_nested_dict(extra_params, "crawl_stats")
+    expanded_keyword_count = _coerce_optional_int(crawl_stats.get("expanded_keyword_count"))
+    if expanded_keyword_count is not None and expanded_keyword_count >= 0:
+        return expanded_keyword_count
+
+    expansion = keyword_expansion or build_task_keyword_expansion_read(task)
+    return len(_normalize_keyword_list(expansion.generated_synonyms))
+
+
+def _build_retry_keyword_expansion_payload(
+    *,
+    source_keyword: str,
+    task_options: dict[str, Any],
+    source_keyword_expansion: Any,
+) -> dict[str, Any]:
+    enabled = bool(task_options.get("enable_keyword_synonym_expansion", False))
+    requested_synonym_count = _coerce_optional_int(
+        task_options.get("keyword_synonym_count")
+    )
+    if not enabled:
+        return _build_keyword_expansion_payload(
+            source_keyword=source_keyword,
+            enabled=False,
+            requested_synonym_count=None,
+            status="skipped",
+        )
+
+    copied_payload = _copy_successful_keyword_expansion_payload(
+        source_keyword_expansion,
+        source_keyword=source_keyword,
+        requested_synonym_count=requested_synonym_count,
+    )
+    if copied_payload is not None:
+        return copied_payload
+
+    return _build_keyword_expansion_payload(
+        source_keyword=source_keyword,
+        enabled=True,
+        requested_synonym_count=requested_synonym_count,
+        status="pending",
+    )
+
+
+def _copy_successful_keyword_expansion_payload(
+    payload: Any,
+    *,
+    source_keyword: str,
+    requested_synonym_count: int | None,
+) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+
+    status = str(payload.get("status") or "").strip().lower()
+    if status != "success":
+        return None
+
+    generated_synonyms = _normalize_keyword_list(payload.get("generated_synonyms"))
+    if not generated_synonyms:
+        return None
+
+    return _build_keyword_expansion_payload(
+        source_keyword=source_keyword,
+        enabled=True,
+        requested_synonym_count=requested_synonym_count,
+        status="success",
+        generated_synonyms=generated_synonyms,
+        model_name=_normalize_optional_string(payload.get("model_name")),
+        error_message=_normalize_optional_string(payload.get("error_message")),
+        generated_at=_normalize_optional_string(payload.get("generated_at")),
+    )
+
+
+def _build_keyword_expansion_payload(
+    *,
+    source_keyword: str,
+    enabled: bool,
+    requested_synonym_count: int | None,
+    status: str,
+    generated_synonyms: list[str] | None = None,
+    model_name: str | None = None,
+    error_message: str | None = None,
+    generated_at: str | None = None,
+) -> dict[str, Any]:
+    normalized_keyword = _normalize_keyword(source_keyword)
+    normalized_status = str(status).strip().lower()
+    if normalized_status not in KEYWORD_EXPANSION_ALLOWED_STATUSES:
+        normalized_status = "pending" if enabled else "skipped"
+
+    normalized_generated_synonyms = (
+        _normalize_keyword_list(generated_synonyms)
+        if normalized_status == "success"
+        else []
+    )
+    expanded_keywords = [normalized_keyword]
+    expanded_keywords.extend(
+        synonym
+        for synonym in normalized_generated_synonyms
+        if synonym != normalized_keyword
+    )
+
+    return {
+        "source_keyword": normalized_keyword,
+        "enabled": enabled,
+        "requested_synonym_count": requested_synonym_count if enabled else None,
+        "generated_synonyms": normalized_generated_synonyms,
+        "expanded_keywords": expanded_keywords,
+        "status": normalized_status,
+        "model_name": (
+            model_name
+            if normalized_status in {"success", "fallback", "failed"}
+            else None
+        ),
+        "error_message": (
+            error_message
+            if normalized_status in {"success", "fallback", "failed"}
+            else None
+        ),
+        "generated_at": (
+            generated_at
+            if normalized_status in {"success", "fallback", "failed"}
+            else None
+        ),
+    }
+
+
+def _get_task_extra_params(task: CrawlTask) -> dict[str, Any]:
+    return task.extra_params if isinstance(task.extra_params, dict) else {}
+
+
+def _get_nested_dict(payload: dict[str, Any], key: str) -> dict[str, Any]:
+    value = payload.get(key)
+    return value if isinstance(value, dict) else {}
+
+
+def _normalize_keyword_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+
+    normalized_values: list[str] = []
+    for item in value:
+        normalized_item = _normalize_keyword(item)
+        if normalized_item and normalized_item not in normalized_values:
+            normalized_values.append(normalized_item)
+    return normalized_values
+
+
+def _normalize_keyword(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _normalize_optional_string(value: Any) -> str | None:
+    normalized = _normalize_keyword(value)
+    return normalized or None
+
+
+def _coerce_optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None

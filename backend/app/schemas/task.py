@@ -9,6 +9,7 @@ ALLOWED_IP_STRATEGIES = {"local_sleep", "proxy_pool", "custom_proxy"}
 ALLOWED_CRAWL_MODES = {"keyword", "hot"}
 ALLOWED_SEARCH_SCOPES = {"site", "partition"}
 ALLOWED_HOT_AUTHOR_SUMMARY_BASES = {"time", "heat"}
+ALLOWED_KEYWORD_SYNONYM_COUNTS = {1, 2, 3, 5}
 
 
 class TaskCreateRequest(BaseModel):
@@ -28,6 +29,8 @@ class TaskCreateRequest(BaseModel):
     min_sleep_seconds: float | None = Field(default=None, gt=0)
     max_sleep_seconds: float | None = Field(default=None, gt=0)
     source_ip_strategy: str | None = Field(default=None, max_length=50)
+    enable_keyword_synonym_expansion: bool | None = None
+    keyword_synonym_count: int | None = Field(default=None, ge=1)
 
     @field_validator("crawl_mode")
     @classmethod
@@ -117,6 +120,32 @@ class TaskCreateRequest(BaseModel):
             self.hot_author_video_limit = self.hot_author_video_limit or 10
             self.hot_author_summary_basis = self.hot_author_summary_basis or "time"
 
+        if self.crawl_mode != "keyword":
+            self.enable_keyword_synonym_expansion = False
+            self.keyword_synonym_count = None
+            return self
+
+        self.enable_keyword_synonym_expansion = bool(
+            self.enable_keyword_synonym_expansion
+        )
+        if not self.enable_keyword_synonym_expansion:
+            self.keyword_synonym_count = None
+            return self
+
+        if self.keyword_synonym_count is None:
+            raise ValueError(
+                "keyword_synonym_count is required when keyword synonym expansion is enabled."
+            )
+
+        if self.keyword_synonym_count not in ALLOWED_KEYWORD_SYNONYM_COUNTS:
+            allowed_values = ", ".join(
+                str(item) for item in sorted(ALLOWED_KEYWORD_SYNONYM_COUNTS)
+            )
+            raise ValueError(
+                "keyword_synonym_count must be one of: "
+                f"{allowed_values} when keyword synonym expansion is enabled."
+            )
+
         return self
 
 
@@ -151,8 +180,23 @@ class TaskSummary(BaseModel):
     deleted_at: datetime | None = None
 
 
+class KeywordExpansionRead(BaseModel):
+    source_keyword: str
+    enabled: bool
+    requested_synonym_count: int | None = None
+    generated_synonyms: list[str] = Field(default_factory=list)
+    expanded_keywords: list[str] = Field(default_factory=list)
+    status: str
+    model_name: str | None = None
+    error_message: str | None = None
+    generated_at: str | None = None
+
+
 class TaskDetail(TaskSummary):
     extra_params: dict[str, Any] | None = None
+    keyword_expansion: KeywordExpansionRead | None = None
+    search_keywords_used: list[str] = Field(default_factory=list)
+    expanded_keyword_count: int = 0
     current_stage: str
     progress_percent: int
     log_total: int = 0
@@ -207,6 +251,9 @@ class TaskProgressPayload(BaseModel):
     finished_at: datetime | None = None
     error_message: str | None = None
     extra_params: dict[str, Any] | None = None
+    keyword_expansion: KeywordExpansionRead | None = None
+    search_keywords_used: list[str] = Field(default_factory=list)
+    expanded_keyword_count: int = 0
     latest_log: TaskLogRead | None = None
 
 
@@ -260,6 +307,9 @@ class TaskVideoResultRead(BaseModel):
     published_at: datetime | None = None
     duration_seconds: int | None = None
     search_rank: int | None = None
+    matched_keywords: list[str] = Field(default_factory=list)
+    primary_matched_keyword: str | None = None
+    keyword_match_count: int = 0
     keyword_hit_title: bool
     keyword_hit_description: bool
     keyword_hit_tags: bool
@@ -511,6 +561,45 @@ class TaskAnalysisMetricDefinitionRead(BaseModel):
     limitations: str | None = None
 
 
+class TaskAnalysisMetricWeightComponentRead(BaseModel):
+    key: str
+    label: str
+    weight: float = Field(ge=0)
+    default_weight: float = Field(ge=0)
+    effective_weight: float = Field(ge=0)
+
+
+class TaskAnalysisMetricWeightConfigRead(BaseModel):
+    metric_key: str
+    metric_name: str
+    category: str
+    formula: str
+    normalization_note: str | None = None
+    customized: bool = False
+    components: list[TaskAnalysisMetricWeightComponentRead] = Field(
+        default_factory=list
+    )
+
+
+class TaskAnalysisMetricWeightComponentWrite(BaseModel):
+    key: str = Field(min_length=1, max_length=100)
+    weight: float = Field(ge=0)
+
+
+class TaskAnalysisMetricWeightConfigWrite(BaseModel):
+    metric_key: str = Field(min_length=1, max_length=100)
+    components: list[TaskAnalysisMetricWeightComponentWrite] = Field(
+        default_factory=list
+    )
+
+
+class TaskAnalysisWeightsUpdateRequest(BaseModel):
+    metrics: list[TaskAnalysisMetricWeightConfigWrite] = Field(
+        default_factory=list,
+        min_length=1,
+    )
+
+
 class TaskAnalysisAdvancedRead(BaseModel):
     hot_topics: list[TaskTopicRead] = Field(default_factory=list)
     keyword_cooccurrence: list[TaskAnalysisCooccurrenceRead] = Field(
@@ -533,6 +622,9 @@ class TaskAnalysisAdvancedRead(BaseModel):
     topic_insights: list[TaskAnalysisTopicInsightRead] = Field(default_factory=list)
     video_insights: list[TaskAnalysisVideoInsightRead] = Field(default_factory=list)
     metric_definitions: list[TaskAnalysisMetricDefinitionRead] = Field(
+        default_factory=list
+    )
+    metric_weight_configs: list[TaskAnalysisMetricWeightConfigRead] = Field(
         default_factory=list
     )
     recommendations: list[TaskAnalysisRecommendationRead] = Field(
@@ -579,10 +671,14 @@ class TaskReportPayload(BaseModel):
     task_id: str
     status: str
     generated_at: datetime
+    task_keyword: str | None = None
     title: str
     subtitle: str | None = None
     executive_summary: str
     latest_hot_topic_name: str | None = None
+    keyword_expansion: KeywordExpansionRead | None = None
+    search_keywords_used: list[str] = Field(default_factory=list)
+    expanded_keyword_count: int = 0
     featured_videos: list[TaskAnalysisVideoInsightRead] = Field(default_factory=list)
     recommendations: list[TaskAnalysisRecommendationRead] = Field(default_factory=list)
     popular_authors: list[TaskAnalysisPopularAuthorRead] = Field(default_factory=list)

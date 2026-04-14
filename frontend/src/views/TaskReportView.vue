@@ -19,6 +19,17 @@
       :current-stage="taskProgress.current_stage"
     />
 
+    <TaskSearchContextCard
+      v-if="report && taskProgress"
+      :task-keyword="report.task_keyword"
+      :keyword-expansion="report.keyword_expansion"
+      :search-keywords-used="report.search_keywords_used"
+      :expanded-keyword-count="report.expanded_keyword_count"
+      :crawl-mode="reportCrawlMode"
+      title="报告搜索口径"
+      description="报告不会按同义词拆成多份，但这里会明确说明这次分析样本是由哪些搜索词召回的。"
+    />
+
     <section class="stats-grid">
       <StatCard label="报告章节" :value="String(report?.sections.length ?? 0)" />
       <StatCard label="AI 解读" :value="String(report?.ai_outputs.length ?? 0)" />
@@ -272,6 +283,7 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import InsightText from '@/components/common/InsightText.vue'
 import StatCard from '@/components/common/StatCard.vue'
 import TaskLifecycleNotice from '@/components/tasks/TaskLifecycleNotice.vue'
+import TaskSearchContextCard from '@/components/tasks/TaskSearchContextCard.vue'
 import { useTaskWorkspaceStore } from '@/stores/taskWorkspace'
 import { formatInsightHtml } from '@/utils/aiText'
 import { formatCompactNumber, formatNumber, formatPercent, formatScore } from '@/utils/format'
@@ -286,6 +298,15 @@ const taskProgress = ref<TaskProgressPayload | null>(null)
 const loading = ref(false)
 const showMarkdown = ref(false)
 const latestProgressLogId = ref('')
+const reportCrawlMode = computed<'keyword' | 'hot'>(() => {
+  const taskOptions = taskProgress.value?.extra_params?.task_options
+  if (taskOptions && typeof taskOptions === 'object') {
+    return String((taskOptions as Record<string, unknown>).crawl_mode || 'keyword') === 'hot'
+      ? 'hot'
+      : 'keyword'
+  }
+  return 'keyword'
+})
 
 let timer: number | null = null
 let pollInFlight = false

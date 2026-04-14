@@ -176,7 +176,10 @@ def get_task_topics(session: Session, task_id: str) -> TaskTopicListPayload:
     statistics = (
         cached_snapshot.statistics
         if cached_snapshot is not None
-        else StatisticsService(session).calculate_task_statistics(task.id)
+        else StatisticsService(
+            session,
+            include_external_author_fetch=False,
+        ).calculate_task_statistics(task.id)
     )
 
     return TaskTopicListPayload(
@@ -191,7 +194,10 @@ def get_task_analysis(session: Session, task_id: str) -> TaskAnalysisPayload:
     statistics = (
         cached_snapshot.statistics
         if cached_snapshot is not None
-        else StatisticsService(session).calculate_task_statistics(task.id)
+        else StatisticsService(
+            session,
+            include_external_author_fetch=False,
+        ).calculate_task_statistics(task.id)
     )
 
     if cached_snapshot is not None and cached_snapshot.top_videos is not None:
@@ -400,6 +406,9 @@ def _build_task_video_read(row: TaskVideoRow) -> TaskVideoResultRead:
         published_at=row.video.published_at,
         duration_seconds=row.video.duration_seconds,
         search_rank=row.task_video.search_rank,
+        matched_keywords=list(row.task_video.matched_keywords or []),
+        primary_matched_keyword=row.task_video.primary_matched_keyword,
+        keyword_match_count=row.task_video.keyword_match_count,
         keyword_hit_title=row.task_video.keyword_hit_title,
         keyword_hit_description=row.task_video.keyword_hit_description,
         keyword_hit_tags=row.task_video.keyword_hit_tags,
@@ -745,6 +754,7 @@ def _is_legacy_analysis_snapshot(snapshot: dict) -> bool:
         "topic_insights",
         "video_insights",
         "metric_definitions",
+        "metric_weight_configs",
         "recommendations",
         "data_notes",
     }

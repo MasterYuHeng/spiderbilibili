@@ -13,6 +13,7 @@ from app.services.task_service import (
     calculate_task_progress,
     delete_crawl_task,
     get_task_progress,
+    resume_crawl_task,
     retry_crawl_task,
     restore_crawl_task,
 )
@@ -73,7 +74,20 @@ def test_retry_crawl_task_creates_a_new_queued_task(monkeypatch) -> None:
                     "max_pages": 2,
                     "enable_proxy": False,
                     "source_ip_strategy": "local_sleep",
-                }
+                    "enable_keyword_synonym_expansion": True,
+                    "keyword_synonym_count": 3,
+                },
+                "keyword_expansion": {
+                    "source_keyword": "AI",
+                    "enabled": True,
+                    "requested_synonym_count": 3,
+                    "generated_synonyms": ["人工智能", "AI工具", "大模型"],
+                    "expanded_keywords": ["AI", "人工智能", "AI工具", "大模型"],
+                    "status": "success",
+                    "model_name": "gpt-4.1-mini",
+                    "error_message": None,
+                    "generated_at": "2026-04-13T10:00:00Z",
+                },
             },
         )
         session.add(source_task)
@@ -101,7 +115,155 @@ def test_retry_crawl_task_creates_a_new_queued_task(monkeypatch) -> None:
     assert detail.status == "queued"
     assert detail.extra_params["retry_context"]["retry_of_task_id"] == source_task_id
     assert detail.extra_params["task_options"]["published_within_days"] == 7
+    assert detail.extra_params["task_options"]["enable_keyword_synonym_expansion"] is True
+    assert detail.extra_params["task_options"]["keyword_synonym_count"] == 3
+    assert detail.extra_params["keyword_expansion"]["status"] == "success"
+    assert detail.extra_params["keyword_expansion"]["generated_synonyms"] == [
+        "人工智能",
+        "AI工具",
+        "大模型",
+    ]
+    assert detail.extra_params["keyword_expansion"]["expanded_keywords"] == [
+        "AI",
+        "人工智能",
+        "AI工具",
+        "大模型",
+    ]
+    assert (
+        detail.extra_params["keyword_expansion"]["generated_at"]
+        == "2026-04-13T10:00:00Z"
+    )
     assert dispatch.celery_task_id == f"celery-{detail.id}"
+
+
+def test_retry_crawl_task_resets_unsuccessful_keyword_expansion_to_pending(
+    monkeypatch,
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    with factory() as session:
+        source_task = CrawlTask(
+            keyword="和平精英",
+            status=TaskStatus.FAILED,
+            requested_video_limit=10,
+            max_pages=2,
+            min_sleep_seconds=Decimal("1.50"),
+            max_sleep_seconds=Decimal("3.00"),
+            enable_proxy=False,
+            source_ip_strategy="local_sleep",
+            extra_params={
+                "task_options": {
+                    "crawl_mode": "keyword",
+                    "search_scope": "site",
+                    "requested_video_limit": 10,
+                    "max_pages": 2,
+                    "enable_proxy": False,
+                    "source_ip_strategy": "local_sleep",
+                    "enable_keyword_synonym_expansion": True,
+                    "keyword_synonym_count": 2,
+                },
+                "keyword_expansion": {
+                    "source_keyword": "和平精英",
+                    "enabled": True,
+                    "requested_synonym_count": 2,
+                    "generated_synonyms": [],
+                    "expanded_keywords": ["和平精英"],
+                    "status": "fallback",
+                    "model_name": None,
+                    "error_message": "AI returned empty synonyms.",
+                    "generated_at": "2026-04-13T11:00:00Z",
+                },
+            },
+        )
+        session.add(source_task)
+        session.commit()
+        source_task_id = source_task.id
+
+    monkeypatch.setattr(
+        "app.services.task_service.enqueue_crawl_task",
+        lambda task_id, dispatch_generation=None: TaskDispatchResult(
+            celery_task_id=f"celery-{task_id}",
+            task_name="app.worker.run_crawl_task",
+        ),
+    )
+
+    with factory() as session:
+        detail, _dispatch = retry_crawl_task(session, source_task_id)
+
+    keyword_expansion = detail.extra_params["keyword_expansion"]
+    assert keyword_expansion["status"] == "pending"
+    assert keyword_expansion["generated_synonyms"] == []
+    assert keyword_expansion["expanded_keywords"] == ["和平精英"]
+    assert keyword_expansion["model_name"] is None
+    assert keyword_expansion["error_message"] is None
+    assert keyword_expansion["generated_at"] is None
+
+
+def test_resume_crawl_task_preserves_keyword_expansion_payload(monkeypatch) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+    with factory() as session:
+        task = CrawlTask(
+            keyword="和平精英",
+            status=TaskStatus.PAUSED,
+            requested_video_limit=10,
+            max_pages=2,
+            min_sleep_seconds=Decimal("1.50"),
+            max_sleep_seconds=Decimal("3.00"),
+            enable_proxy=False,
+            source_ip_strategy="local_sleep",
+            extra_params={
+                "dispatch": {"dispatch_generation": 2, "celery_task_id": "celery-old"},
+                "control": {"requested_action": "pause"},
+                "task_options": {
+                    "crawl_mode": "keyword",
+                    "search_scope": "site",
+                    "requested_video_limit": 10,
+                    "max_pages": 2,
+                    "enable_proxy": False,
+                    "source_ip_strategy": "local_sleep",
+                    "enable_keyword_synonym_expansion": True,
+                    "keyword_synonym_count": 2,
+                },
+                "keyword_expansion": {
+                    "source_keyword": "和平精英",
+                    "enabled": True,
+                    "requested_synonym_count": 2,
+                    "generated_synonyms": ["吃鸡"],
+                    "expanded_keywords": ["和平精英", "吃鸡"],
+                    "status": "success",
+                    "model_name": "gpt-4.1-mini",
+                    "error_message": None,
+                    "generated_at": "2026-04-13T12:00:00Z",
+                },
+            },
+        )
+        session.add(task)
+        session.commit()
+        task_id = task.id
+
+    monkeypatch.setattr(
+        "app.services.task_service.enqueue_crawl_task",
+        lambda task_id, dispatch_generation=None: TaskDispatchResult(
+            celery_task_id=f"celery-{task_id}",
+            task_name="app.worker.run_crawl_task",
+        ),
+    )
+
+    with factory() as session:
+        detail, _dispatch = resume_crawl_task(session, task_id)
+
+    assert detail.status == "queued"
+    assert detail.extra_params["keyword_expansion"]["status"] == "success"
+    assert detail.extra_params["keyword_expansion"]["generated_synonyms"] == ["吃鸡"]
+    assert detail.extra_params["keyword_expansion"]["expanded_keywords"] == [
+        "和平精英",
+        "吃鸡",
+    ]
 
 
 def test_celery_runtime_state_resolver_reuses_single_inspector_snapshot(

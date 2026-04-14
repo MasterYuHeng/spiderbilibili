@@ -548,14 +548,21 @@ def test_crawl_pipeline_service_passes_task_proxy_flag_to_clients(
     calls: dict[str, bool] = {}
 
     class RecordingHttpClient:
-        def __init__(self, *, min_sleep_seconds, max_sleep_seconds, use_proxy):
+        def __init__(
+            self,
+            *,
+            settings,
+            min_sleep_seconds,
+            max_sleep_seconds,
+            use_proxy,
+        ):
             calls["http_use_proxy"] = use_proxy
 
         def close(self) -> None:
             return None
 
     class RecordingBrowserClient:
-        def __init__(self, *, use_proxy):
+        def __init__(self, *, settings, use_proxy):
             calls["browser_use_proxy"] = use_proxy
 
         def close(self) -> None:

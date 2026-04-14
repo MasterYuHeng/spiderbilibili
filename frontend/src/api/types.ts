@@ -86,6 +86,7 @@ export type ExportDataset = 'videos' | 'topics' | 'summaries';
 export type ExportFormat = 'json' | 'csv' | 'excel';
 export type TaskCrawlMode = 'keyword' | 'hot';
 export type TaskSearchScope = 'site' | 'partition';
+export type KeywordSynonymCount = 1 | 2 | 3 | 5;
 export type VideoSortBy =
   | 'composite_score'
   | 'heat_score'
@@ -131,8 +132,30 @@ export interface TaskSummary {
   deleted_at: string | null;
 }
 
+export type KeywordExpansionStatus =
+  | 'skipped'
+  | 'pending'
+  | 'success'
+  | 'fallback'
+  | 'failed';
+
+export interface KeywordExpansionPayload {
+  source_keyword: string;
+  enabled: boolean;
+  requested_synonym_count: KeywordSynonymCount | null;
+  generated_synonyms: string[];
+  expanded_keywords: string[];
+  status: KeywordExpansionStatus | string;
+  model_name: string | null;
+  error_message: string | null;
+  generated_at: string | null;
+}
+
 export interface TaskDetail extends TaskSummary {
   extra_params: Record<string, unknown> | null;
+  keyword_expansion: KeywordExpansionPayload | null;
+  search_keywords_used: string[];
+  expanded_keyword_count: number;
   current_stage: string;
   progress_percent: number;
   log_total: number;
@@ -187,6 +210,9 @@ export interface TaskProgressPayload {
   finished_at: string | null;
   error_message: string | null;
   extra_params: Record<string, unknown> | null;
+  keyword_expansion: KeywordExpansionPayload | null;
+  search_keywords_used: string[];
+  expanded_keyword_count: number;
   latest_log: TaskLog | null;
 }
 
@@ -240,6 +266,9 @@ export interface TaskVideoResult {
   published_at: string | null;
   duration_seconds: number | null;
   search_rank: number | null;
+  matched_keywords: string[];
+  primary_matched_keyword: string | null;
+  keyword_match_count: number;
   keyword_hit_title: boolean;
   keyword_hit_description: boolean;
   keyword_hit_tags: boolean;
@@ -491,6 +520,38 @@ export interface TaskAnalysisMetricDefinition {
   limitations: string | null;
 }
 
+export interface TaskAnalysisMetricWeightComponent {
+  key: string;
+  label: string;
+  weight: number;
+  default_weight: number;
+  effective_weight: number;
+}
+
+export interface TaskAnalysisMetricWeightConfig {
+  metric_key: string;
+  metric_name: string;
+  category: string;
+  formula: string;
+  normalization_note: string | null;
+  customized: boolean;
+  components: TaskAnalysisMetricWeightComponent[];
+}
+
+export interface TaskAnalysisMetricWeightComponentWrite {
+  key: string;
+  weight: number;
+}
+
+export interface TaskAnalysisMetricWeightConfigWrite {
+  metric_key: string;
+  components: TaskAnalysisMetricWeightComponentWrite[];
+}
+
+export interface TaskAnalysisWeightsUpdateRequest {
+  metrics: TaskAnalysisMetricWeightConfigWrite[];
+}
+
 export interface TaskAnalysisAdvanced {
   hot_topics: TaskTopic[];
   keyword_cooccurrence: TaskAnalysisCooccurrence[];
@@ -507,6 +568,7 @@ export interface TaskAnalysisAdvanced {
   topic_insights: TaskAnalysisTopicInsight[];
   video_insights: TaskAnalysisVideoInsight[];
   metric_definitions: TaskAnalysisMetricDefinition[];
+  metric_weight_configs: TaskAnalysisMetricWeightConfig[];
   recommendations: TaskAnalysisRecommendation[];
   popular_authors: TaskAnalysisPopularAuthor[];
   topic_hot_authors: TaskAnalysisTopicHotAuthor[];
@@ -547,10 +609,14 @@ export interface TaskReportPayload {
   task_id: string;
   status: TaskStatus;
   generated_at: string;
+  task_keyword: string | null;
   title: string;
   subtitle: string | null;
   executive_summary: string;
   latest_hot_topic_name: string | null;
+  keyword_expansion: KeywordExpansionPayload | null;
+  search_keywords_used: string[];
+  expanded_keyword_count: number;
   featured_videos: TaskAnalysisVideoInsight[];
   recommendations: TaskAnalysisRecommendation[];
   popular_authors: TaskAnalysisPopularAuthor[];
@@ -598,6 +664,8 @@ export interface TaskCreateRequest {
   min_sleep_seconds: number | null;
   max_sleep_seconds: number | null;
   source_ip_strategy: string | null;
+  enable_keyword_synonym_expansion?: boolean | null;
+  keyword_synonym_count?: KeywordSynonymCount | null;
 }
 
 export interface ListTaskParams {

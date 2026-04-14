@@ -93,6 +93,7 @@ class PopularAuthorAnalysisService:
         *,
         video_insights: list[TaskAnalysisVideoInsightRead],
         topic_insights: list[TaskAnalysisTopicInsightRead],
+        fetch_author_videos: bool = True,
     ) -> PopularAuthorAnalysisResult:
         options = self._resolve_task_options(task)
         hot_author_total_count = int(options["hot_author_total_count"])
@@ -163,6 +164,7 @@ class PopularAuthorAnalysisService:
                 hot_author_video_limit=hot_author_video_limit,
                 summary_basis=summary_basis,
                 baseline_median_view=baseline_median_view,
+                fetch_author_videos=fetch_author_videos,
             )
             for aggregate in selected_aggregates
         ]
@@ -233,7 +235,14 @@ class PopularAuthorAnalysisService:
         hot_author_video_limit: int,
         summary_basis: str,
         baseline_median_view: float,
+        fetch_author_videos: bool,
     ) -> TaskAnalysisPopularAuthorRead:
+        if not fetch_author_videos:
+            return self._build_source_only_author_read(
+                aggregate,
+                summary_basis=summary_basis,
+            )
+
         fetched_videos = self._fetch_author_videos(
             aggregate.author_mid,
             limit=hot_author_video_limit,
@@ -328,6 +337,56 @@ class PopularAuthorAnalysisService:
             content_keywords=list(ai_insights.get("content_keywords") or []),
             analysis_points=analysis_points,
             videos=enriched_videos,
+        )
+
+    def _build_source_only_author_read(
+        self,
+        aggregate: _SourceAuthorAggregate,
+        *,
+        summary_basis: str,
+    ) -> TaskAnalysisPopularAuthorRead:
+        dominant_topics = [
+            topic_name
+            for topic_name, _count in aggregate.topic_names.most_common(3)
+        ]
+        summary_text = (
+            f"{aggregate.author_name} 在当前热点样本中共出现 {len(aggregate.source_videos)} 次，"
+            f"主要关联主题为 {(' / '.join(dominant_topics) or '多主题')}。"
+        )
+        analysis_points = [
+            (
+                f"热点样本数 {len(aggregate.source_videos)}，"
+                f"累计热度 {self._source_total_heat_score(aggregate):.2f}，"
+                f"平均播放 {self._source_average_view_count(aggregate):.0f}。"
+            ),
+            (
+                f"当前为本地轻量分析结果，未触发创作者主页二次抓取；"
+                f"结论基于任务内已抓到的热点视频样本。"
+            ),
+        ]
+        return TaskAnalysisPopularAuthorRead(
+            author_name=aggregate.author_name,
+            author_mid=aggregate.author_mid,
+            source_video_count=len(aggregate.source_videos),
+            source_topic_count=len(aggregate.topic_names),
+            source_total_heat_score=self._source_total_heat_score(aggregate),
+            source_total_composite_score=self._source_total_composite_score(aggregate),
+            source_average_engagement_rate=self._source_average_engagement_rate(aggregate),
+            source_average_view_count=self._source_average_view_count(aggregate),
+            popularity_score=aggregate.popularity_score,
+            dominant_topics=dominant_topics,
+            style_tags=[],
+            selection_reasons=sorted(aggregate.selection_reasons),
+            representative_video=self._representative_video(aggregate),
+            fetched_video_count=0,
+            fetched_average_view_count=0,
+            fetched_average_engagement_rate=0,
+            recent_publish_count=0,
+            summary_basis=summary_basis,
+            summary_text=summary_text,
+            ai_recent_content_summary=summary_text,
+            analysis_points=analysis_points,
+            videos=[],
         )
 
     def _build_author_stub(

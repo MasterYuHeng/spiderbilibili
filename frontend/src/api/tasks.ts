@@ -10,6 +10,7 @@ import type {
   ExportFormat,
   ListTaskParams,
   TaskAnalysisPayload,
+  TaskAnalysisWeightsUpdateRequest,
   TaskCreatePayload,
   TaskCreateRequest,
   TaskDeletePayload,
@@ -173,6 +174,15 @@ export async function getTaskAnalysis(
   options: RequestOptions = {},
 ): Promise<TaskAnalysisPayload> {
   return getTaskResource(taskId, '/analysis', options);
+}
+
+export async function updateTaskAnalysisWeights(
+  taskId: string,
+  payload: TaskAnalysisWeightsUpdateRequest,
+): Promise<TaskAnalysisPayload> {
+  return requestData(() =>
+    apiClient.post<ApiResponse<TaskAnalysisPayload>>(`/tasks/${taskId}/analysis/weights`, payload),
+  );
 }
 
 export async function getTaskAcceptance(

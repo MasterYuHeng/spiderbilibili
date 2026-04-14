@@ -18,7 +18,7 @@ describe('router', () => {
     await flushPromises()
 
     expect(router.currentRoute.value.fullPath).toBe('/tasks/create')
-    expect(wrapper.text()).toContain('开始一次新的热点采集')
+    expect(wrapper.text()).toContain('关键词同义补充')
   })
 
   it('resolves task video route metadata correctly', () => {

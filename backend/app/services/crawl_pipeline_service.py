@@ -26,6 +26,7 @@ from app.services.system_config_service import (
     build_bilibili_runtime_settings,
     get_system_config_value,
 )
+from app.services.keyword_expansion_service import KeywordExpansionService
 from app.services.task_log_service import create_task_log
 from app.services.task_service import assert_task_execution_allowed
 from app.services.video_score_service import VideoScoreService
@@ -57,6 +58,7 @@ class CrawlPipelineService:
         subtitle_spider: BilibiliSubtitleSpider | None = None,
         score_service: VideoScoreService | None = None,
         raw_archive: RawArchiveStore | None = None,
+        keyword_expansion_service: KeywordExpansionService | None = None,
     ) -> None:
         self.session = session
         self._owns_http_client = http_client is None
@@ -69,6 +71,7 @@ class CrawlPipelineService:
         self.subtitle_spider = subtitle_spider
         self.score_service = score_service or VideoScoreService()
         self.raw_archive = raw_archive
+        self.keyword_expansion_service = keyword_expansion_service
         self.storage_service = VideoStorageService(session)
 
     def close(self) -> None:
@@ -151,6 +154,17 @@ class CrawlPipelineService:
             if published_within_days_raw is not None
             else None
         )
+        keyword_expansion, search_keywords_used = self._resolve_keyword_search_context(
+            task,
+            crawl_mode=crawl_mode,
+            task_options=task_options,
+            expected_dispatch_generation=expected_dispatch_generation,
+        )
+        task = assert_task_execution_allowed(
+            self.session,
+            task.id,
+            expected_dispatch_generation=expected_dispatch_generation,
+        )
 
         create_task_log(
             self.session,
@@ -170,6 +184,11 @@ class CrawlPipelineService:
                 "published_within_days": published_within_days,
                 "max_pages": task.max_pages,
                 "requested_video_limit": task.requested_video_limit,
+                "search_keyword_count": len(search_keywords_used),
+                "search_keywords_used": search_keywords_used,
+                "keyword_expansion_status": keyword_expansion.get("status")
+                if isinstance(keyword_expansion, dict)
+                else None,
             },
         )
         self.session.commit()
@@ -191,17 +210,17 @@ class CrawlPipelineService:
                     limit=task.requested_video_limit,
                 )
         else:
-            search_kwargs = {
-                "max_pages": task.max_pages,
-                "limit": task.requested_video_limit,
-            }
-            if search_scope == "partition" and partition_tid is not None:
-                search_kwargs["tids"] = partition_tid
-            candidates = self.search_spider.search_keyword(
-                task.keyword,
-                **search_kwargs,
+            candidates = self._collect_keyword_candidates(
+                task,
+                search_keywords_used=search_keywords_used,
+                search_scope=search_scope,
+                partition_tid=partition_tid,
+                expected_dispatch_generation=expected_dispatch_generation,
             )
-        deduped_candidates = dedupe_search_candidates(candidates)
+        deduped_candidates = dedupe_search_candidates(
+            candidates,
+            source_keyword=task.keyword if crawl_mode == "keyword" else None,
+        )
         filtered_candidates = self._filter_candidates_by_publish_time(
             deduped_candidates,
             published_within_days=published_within_days,
@@ -216,10 +235,15 @@ class CrawlPipelineService:
             stage=TaskStage.SEARCH,
             message="Collected candidate videos for the current crawl mode.",
             payload={
-                "raw_candidate_count": len(deduped_candidates),
+                "raw_candidate_count": len(candidates),
                 "candidate_count": len(filtered_candidates),
                 "filtered_out_count": len(deduped_candidates) - len(filtered_candidates),
                 "selected_count": len(selected_candidates),
+                "search_keyword_count": len(search_keywords_used),
+                "expanded_keyword_count": max(len(search_keywords_used) - 1, 0)
+                if crawl_mode == "keyword"
+                else 0,
+                "search_keywords_used": search_keywords_used,
                 "crawl_mode": crawl_mode,
                 "search_scope": search_scope,
                 "partition_tid": partition_tid,
@@ -459,10 +483,15 @@ class CrawlPipelineService:
             task.extra_params,
             {
                 "crawl_stats": {
-                    "raw_candidate_count": len(deduped_candidates),
+                    "raw_candidate_count": len(candidates),
                     "candidate_count": len(filtered_candidates),
                     "selected_count": len(selected_candidates),
                     "filtered_out_count": len(deduped_candidates) - len(filtered_candidates),
+                    "search_keyword_count": len(search_keywords_used),
+                    "expanded_keyword_count": max(len(search_keywords_used) - 1, 0)
+                    if crawl_mode == "keyword"
+                    else 0,
+                    "search_keywords_used": search_keywords_used,
                     "video_concurrency": video_concurrency,
                     "success_count": len(scored_videos),
                     "failure_count": len(failures),
@@ -525,6 +554,200 @@ class CrawlPipelineService:
             ),
         )
 
+    def _resolve_keyword_search_context(
+        self,
+        task: CrawlTask,
+        *,
+        crawl_mode: str,
+        task_options: dict[str, Any],
+        expected_dispatch_generation: int | None,
+    ) -> tuple[dict[str, Any] | None, list[str]]:
+        if crawl_mode != "keyword":
+            search_keywords_used: list[str] = []
+            task.extra_params = self._merge_task_crawl_payload(
+                task.extra_params,
+                {
+                    "crawl_stats": {
+                        "search_keyword_count": 0,
+                        "expanded_keyword_count": 0,
+                        "search_keywords_used": search_keywords_used,
+                    }
+                },
+            )
+            self.session.commit()
+            return None, search_keywords_used
+
+        source_keyword = str(task.keyword or "").strip()
+        enabled = bool(task_options.get("enable_keyword_synonym_expansion", False))
+        requested_synonym_count = self._coerce_optional_int(
+            task_options.get("keyword_synonym_count")
+        )
+        existing_payload = self._normalize_keyword_expansion_payload(
+            task.extra_params.get("keyword_expansion")
+            if isinstance(task.extra_params, dict)
+            else None,
+            source_keyword=source_keyword,
+            enabled=enabled,
+            requested_synonym_count=requested_synonym_count,
+        )
+
+        should_run_expansion = enabled and existing_payload.get("status") == "pending"
+        keyword_expansion = existing_payload
+        if should_run_expansion:
+            create_task_log(
+                self.session,
+                task=task,
+                stage=TaskStage.SEARCH,
+                message="Starting keyword expansion.",
+                payload={
+                    "source_keyword": source_keyword,
+                    "requested_synonym_count": requested_synonym_count,
+                },
+            )
+            self.session.commit()
+            task = assert_task_execution_allowed(
+                self.session,
+                task.id,
+                expected_dispatch_generation=expected_dispatch_generation,
+            )
+            if self.keyword_expansion_service is None:
+                self.keyword_expansion_service = KeywordExpansionService(
+                    self.session,
+                )
+            keyword_expansion = self.keyword_expansion_service.expand_keyword(
+                source_keyword=source_keyword,
+                requested_synonym_count=requested_synonym_count,
+                enabled=True,
+            )
+            keyword_expansion = self._normalize_keyword_expansion_payload(
+                keyword_expansion,
+                source_keyword=source_keyword,
+                enabled=True,
+                requested_synonym_count=requested_synonym_count,
+            )
+            task.extra_params = self._merge_task_crawl_payload(
+                task.extra_params,
+                {"keyword_expansion": keyword_expansion},
+            )
+            self.session.commit()
+
+            if keyword_expansion["status"] == "success":
+                create_task_log(
+                    self.session,
+                    task=task,
+                    stage=TaskStage.SEARCH,
+                    message="Keyword expansion succeeded.",
+                    payload={
+                        "source_keyword": source_keyword,
+                        "generated_synonyms": keyword_expansion["generated_synonyms"],
+                        "expanded_keywords": keyword_expansion["expanded_keywords"],
+                        "model_name": keyword_expansion.get("model_name"),
+                    },
+                )
+            else:
+                create_task_log(
+                    self.session,
+                    task=task,
+                    level=LogLevel.WARNING,
+                    stage=TaskStage.SEARCH,
+                    message="Keyword expansion failed, fallback to source keyword.",
+                    payload={
+                        "source_keyword": source_keyword,
+                        "status": keyword_expansion["status"],
+                        "error_message": keyword_expansion.get("error_message"),
+                        "expanded_keywords": keyword_expansion["expanded_keywords"],
+                        "model_name": keyword_expansion.get("model_name"),
+                    },
+                )
+            self.session.commit()
+
+        search_keywords_used = self._normalize_search_keywords(
+            keyword_expansion.get("expanded_keywords")
+            if isinstance(keyword_expansion, dict)
+            else None,
+            source_keyword=source_keyword,
+        )
+        if not search_keywords_used:
+            search_keywords_used = [source_keyword] if source_keyword else []
+
+        task.extra_params = self._merge_task_crawl_payload(
+            task.extra_params,
+            {
+                "keyword_expansion": keyword_expansion,
+                "crawl_stats": {
+                    "search_keyword_count": len(search_keywords_used),
+                    "expanded_keyword_count": max(len(search_keywords_used) - 1, 0),
+                    "search_keywords_used": search_keywords_used,
+                },
+            },
+        )
+        self.session.commit()
+        return keyword_expansion, search_keywords_used
+
+    def _collect_keyword_candidates(
+        self,
+        task: CrawlTask,
+        *,
+        search_keywords_used: list[str],
+        search_scope: str,
+        partition_tid: int | None,
+        expected_dispatch_generation: int | None,
+    ) -> list:
+        all_candidates: list[Any] = []
+        total_keywords = len(search_keywords_used)
+        search_kwargs = {
+            "max_pages": task.max_pages,
+            "limit": task.requested_video_limit,
+        }
+        if search_scope == "partition" and partition_tid is not None:
+            search_kwargs["tids"] = partition_tid
+
+        for index, search_keyword in enumerate(search_keywords_used, start=1):
+            task = assert_task_execution_allowed(
+                self.session,
+                task.id,
+                expected_dispatch_generation=expected_dispatch_generation,
+            )
+            create_task_log(
+                self.session,
+                task=task,
+                stage=TaskStage.SEARCH,
+                message="Starting keyword search for expansion item.",
+                payload={
+                    "search_keyword": search_keyword,
+                    "search_keyword_index": index,
+                    "search_keyword_count": total_keywords,
+                    "search_scope": search_scope,
+                    "partition_tid": partition_tid,
+                },
+            )
+            self.session.commit()
+            all_candidates.extend(
+                self.search_spider.search_keyword(
+                    search_keyword,
+                    **search_kwargs,
+                )
+            )
+
+        merged_candidates = dedupe_search_candidates(
+            all_candidates,
+            source_keyword=task.keyword,
+        )
+        create_task_log(
+            self.session,
+            task=task,
+            stage=TaskStage.SEARCH,
+            message="Finished multi-keyword search merge.",
+            payload={
+                "search_keyword_count": total_keywords,
+                "search_keywords_used": search_keywords_used,
+                "raw_candidate_count": len(all_candidates),
+                "merged_candidate_count": len(merged_candidates),
+            },
+        )
+        self.session.commit()
+        return all_candidates
+
     @staticmethod
     def _serialize_scored_video(item: ScoredVideo) -> dict[str, Any]:
         detail = item.bundle.detail
@@ -559,6 +782,9 @@ class CrawlPipelineService:
             if subtitle is not None
             else None,
             "search_rank": candidate.search_rank,
+            "matched_keywords": list(candidate.matched_keywords or []),
+            "primary_matched_keyword": candidate.primary_matched_keyword,
+            "keyword_match_count": candidate.keyword_match_count,
             "keyword_hit_title": item.keyword_hit_title,
             "keyword_hit_description": item.keyword_hit_description,
             "keyword_hit_tags": item.keyword_hit_tags,
@@ -692,3 +918,117 @@ class CrawlPipelineService:
             },
         )
         self.session.commit()
+
+    @staticmethod
+    def _normalize_keyword_expansion_payload(
+        payload: Any,
+        *,
+        source_keyword: str,
+        enabled: bool,
+        requested_synonym_count: int | None,
+    ) -> dict[str, Any]:
+        normalized_source_keyword = str(source_keyword or "").strip()
+        normalized_status = str(
+            payload.get("status") if isinstance(payload, dict) else ""
+        ).strip().lower()
+        if normalized_status not in {"skipped", "pending", "success", "fallback", "failed"}:
+            normalized_status = "pending" if enabled else "skipped"
+
+        if not enabled:
+            normalized_status = "skipped"
+
+        generated_synonyms = (
+            CrawlPipelineService._normalize_generated_synonyms(
+                payload.get("generated_synonyms") if isinstance(payload, dict) else None,
+                source_keyword=normalized_source_keyword,
+            )
+            if normalized_status == "success"
+            else []
+        )
+        if normalized_status == "success" and not generated_synonyms:
+            normalized_status = "pending" if enabled else "skipped"
+
+        expanded_keywords = (
+            [normalized_source_keyword, *generated_synonyms]
+            if generated_synonyms
+            else [normalized_source_keyword]
+        )
+        return {
+            "source_keyword": normalized_source_keyword,
+            "enabled": enabled,
+            "requested_synonym_count": requested_synonym_count if enabled else None,
+            "generated_synonyms": generated_synonyms,
+            "expanded_keywords": expanded_keywords,
+            "status": normalized_status,
+            "model_name": (
+                str(payload.get("model_name")).strip()
+                if isinstance(payload, dict)
+                and payload.get("model_name")
+                and normalized_status in {"success", "fallback", "failed"}
+                else None
+            ),
+            "error_message": (
+                str(payload.get("error_message")).strip()
+                if isinstance(payload, dict)
+                and payload.get("error_message")
+                and normalized_status in {"success", "fallback", "failed"}
+                else None
+            ),
+            "generated_at": (
+                str(payload.get("generated_at")).strip()
+                if isinstance(payload, dict)
+                and payload.get("generated_at")
+                and normalized_status in {"success", "fallback", "failed"}
+                else None
+            ),
+        }
+
+    @staticmethod
+    def _normalize_generated_synonyms(
+        value: Any,
+        *,
+        source_keyword: str,
+    ) -> list[str]:
+        normalized_values: list[str] = []
+        seen: set[str] = set()
+        normalized_source_keyword = str(source_keyword or "").strip()
+        for item in value if isinstance(value, list) else []:
+            normalized_item = str(item or "").strip()
+            if not normalized_item:
+                continue
+            if normalized_item == normalized_source_keyword:
+                continue
+            if normalized_item in seen:
+                continue
+            normalized_values.append(normalized_item)
+            seen.add(normalized_item)
+        return normalized_values
+
+    @staticmethod
+    def _normalize_search_keywords(
+        value: Any,
+        *,
+        source_keyword: str,
+    ) -> list[str]:
+        normalized_source_keyword = str(source_keyword or "").strip()
+        normalized_values: list[str] = []
+        seen: set[str] = set()
+        if normalized_source_keyword:
+            normalized_values.append(normalized_source_keyword)
+            seen.add(normalized_source_keyword)
+        for item in value if isinstance(value, list) else []:
+            normalized_item = str(item or "").strip()
+            if not normalized_item or normalized_item in seen:
+                continue
+            normalized_values.append(normalized_item)
+            seen.add(normalized_item)
+        return normalized_values
+
+    @staticmethod
+    def _coerce_optional_int(value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None

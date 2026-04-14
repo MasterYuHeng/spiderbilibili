@@ -115,6 +115,13 @@ def test_create_task_endpoint_persists_task_and_dispatch_metadata(monkeypatch) -
     assert payload["data"]["task"]["logs"][0]["message"] == (
         "Task created and waiting for queue dispatch."
     )
+    assert payload["data"]["task"]["extra_params"]["keyword_expansion"]["status"] == "skipped"
+    assert (
+        payload["data"]["task"]["extra_params"]["keyword_expansion"][
+            "expanded_keywords"
+        ]
+        == [payload["data"]["task"]["keyword"]]
+    )
     assert payload["data"]["dispatch"]["celery_task_id"].startswith("celery-")
     assert observed_dispatch_snapshot["task_id"] == payload["data"]["task"]["id"]
     assert observed_dispatch_snapshot["status"] == "queued"
@@ -130,6 +137,15 @@ def test_create_task_endpoint_persists_task_and_dispatch_metadata(monkeypatch) -
         assert stored_task.extra_params["task_options"]["topic_hot_author_count"] == 1
         assert stored_task.extra_params["task_options"]["hot_author_video_limit"] == 10
         assert stored_task.extra_params["task_options"]["hot_author_summary_basis"] == "heat"
+        assert (
+            stored_task.extra_params["task_options"][
+                "enable_keyword_synonym_expansion"
+            ]
+            is False
+        )
+        assert stored_task.extra_params["task_options"]["keyword_synonym_count"] is None
+        assert stored_task.extra_params["keyword_expansion"]["status"] == "skipped"
+        assert stored_task.extra_params["keyword_expansion"]["generated_synonyms"] == []
         assert (
             stored_task.extra_params["dispatch"]["task_name"]
             == "app.worker.run_crawl_task"
@@ -154,6 +170,41 @@ def test_create_task_endpoint_rejects_empty_keyword() -> None:
     assert payload["success"] is False
     assert payload["error"]["code"] == "request_validation_error"
     assert payload["request_id"] == "task-empty-keyword"
+
+
+def test_create_task_endpoint_accepts_custom_published_within_days(monkeypatch) -> None:
+    session_factory = build_session_factory()
+    app.dependency_overrides[get_db_session] = build_db_override(session_factory)
+
+    monkeypatch.setattr(
+        "app.services.task_service.enqueue_crawl_task",
+        lambda task_id, dispatch_generation=None: TaskDispatchResult(
+            celery_task_id=f"celery-{task_id[:8]}",
+            task_name="app.worker.run_crawl_task",
+        ),
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/tasks",
+        headers={"X-Request-ID": "task-custom-published-within-days"},
+        json={
+            "keyword": "自定义时间窗",
+            "published_within_days": 45,
+        },
+    )
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["data"]["task"]["extra_params"]["task_options"]["published_within_days"] == 45
+
+    with session_factory() as session:
+        stored_task = session.get(CrawlTask, payload["data"]["task"]["id"])
+        assert stored_task is not None
+        assert stored_task.extra_params["task_options"]["published_within_days"] == 45
 
 
 def test_create_hot_task_endpoint_accepts_blank_keyword(monkeypatch) -> None:
@@ -193,6 +244,157 @@ def test_create_hot_task_endpoint_accepts_blank_keyword(monkeypatch) -> None:
         assert stored_task.keyword == "当前热度"
         assert stored_task.extra_params["task_options"]["crawl_mode"] == "hot"
         assert stored_task.extra_params["task_options"]["search_scope"] == "site"
+        assert (
+            stored_task.extra_params["task_options"][
+                "enable_keyword_synonym_expansion"
+            ]
+            is False
+        )
+        assert stored_task.extra_params["task_options"]["keyword_synonym_count"] is None
+
+
+def test_create_task_endpoint_accepts_keyword_synonym_expansion_params(
+    monkeypatch,
+) -> None:
+    session_factory = build_session_factory()
+    app.dependency_overrides[get_db_session] = build_db_override(session_factory)
+
+    monkeypatch.setattr(
+        "app.services.task_service.enqueue_crawl_task",
+        lambda task_id, dispatch_generation=None: TaskDispatchResult(
+            celery_task_id=f"celery-{task_id[:8]}",
+            task_name="app.worker.run_crawl_task",
+        ),
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/tasks",
+        headers={"X-Request-ID": "task-create-expansion"},
+        json={
+            "keyword": "和平精英",
+            "enable_keyword_synonym_expansion": True,
+            "keyword_synonym_count": 2,
+        },
+    )
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 201
+    payload = response.json()
+    task_options = payload["data"]["task"]["extra_params"]["task_options"]
+    keyword_expansion = payload["data"]["task"]["extra_params"]["keyword_expansion"]
+    assert task_options["enable_keyword_synonym_expansion"] is True
+    assert task_options["keyword_synonym_count"] == 2
+    assert payload["data"]["task"]["keyword_expansion"]["source_keyword"] == payload["data"]["task"]["keyword"]
+    assert payload["data"]["task"]["keyword_expansion"]["enabled"] is True
+    assert payload["data"]["task"]["search_keywords_used"] == [payload["data"]["task"]["keyword"]]
+    assert payload["data"]["task"]["expanded_keyword_count"] == 0
+    assert keyword_expansion["source_keyword"] == payload["data"]["task"]["keyword"]
+    assert keyword_expansion["enabled"] is True
+    assert keyword_expansion["requested_synonym_count"] == 2
+    assert keyword_expansion["generated_synonyms"] == []
+    assert keyword_expansion["expanded_keywords"] == [payload["data"]["task"]["keyword"]]
+    assert keyword_expansion["status"] == "pending"
+    assert keyword_expansion["model_name"] is None
+    assert keyword_expansion["error_message"] is None
+    assert keyword_expansion["generated_at"] is None
+
+    with session_factory() as session:
+        stored_task = session.get(CrawlTask, payload["data"]["task"]["id"])
+        assert stored_task is not None
+        assert (
+            stored_task.extra_params["task_options"]["enable_keyword_synonym_expansion"]
+            is True
+        )
+        assert stored_task.extra_params["task_options"]["keyword_synonym_count"] == 2
+        assert stored_task.extra_params["keyword_expansion"]["status"] == "pending"
+
+
+def test_create_hot_task_endpoint_ignores_keyword_synonym_expansion_params(
+    monkeypatch,
+) -> None:
+    session_factory = build_session_factory()
+    app.dependency_overrides[get_db_session] = build_db_override(session_factory)
+
+    monkeypatch.setattr(
+        "app.services.task_service.enqueue_crawl_task",
+        lambda task_id, dispatch_generation=None: TaskDispatchResult(
+            celery_task_id=f"celery-{task_id[:8]}",
+            task_name="app.worker.run_crawl_task",
+        ),
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/tasks",
+        headers={"X-Request-ID": "task-hot-ignore-expansion"},
+        json={
+            "crawl_mode": "hot",
+            "keyword": "",
+            "enable_keyword_synonym_expansion": True,
+            "keyword_synonym_count": 5,
+        },
+    )
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 201
+    payload = response.json()
+    task_options = payload["data"]["task"]["extra_params"]["task_options"]
+    keyword_expansion = payload["data"]["task"]["extra_params"]["keyword_expansion"]
+    assert task_options["enable_keyword_synonym_expansion"] is False
+    assert task_options["keyword_synonym_count"] is None
+    assert payload["data"]["task"]["keyword_expansion"]["status"] == "skipped"
+    assert payload["data"]["task"]["search_keywords_used"] == []
+    assert payload["data"]["task"]["expanded_keyword_count"] == 0
+    assert keyword_expansion["status"] == "skipped"
+    assert keyword_expansion["generated_synonyms"] == []
+
+
+def test_create_task_endpoint_rejects_missing_keyword_synonym_count_when_enabled() -> None:
+    session_factory = build_session_factory()
+    app.dependency_overrides[get_db_session] = build_db_override(session_factory)
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/tasks",
+        headers={"X-Request-ID": "task-expansion-missing-count"},
+        json={
+            "keyword": "和平精英",
+            "enable_keyword_synonym_expansion": True,
+        },
+    )
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    payload = response.json()
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "request_validation_error"
+
+
+def test_create_task_endpoint_rejects_invalid_keyword_synonym_count() -> None:
+    session_factory = build_session_factory()
+    app.dependency_overrides[get_db_session] = build_db_override(session_factory)
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/tasks",
+        headers={"X-Request-ID": "task-expansion-invalid-count"},
+        json={
+            "keyword": "和平精英",
+            "enable_keyword_synonym_expansion": True,
+            "keyword_synonym_count": 4,
+        },
+    )
+
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    payload = response.json()
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "request_validation_error"
 
 
 def test_create_partition_hot_task_requires_partition_tid(monkeypatch) -> None:
@@ -241,11 +443,26 @@ def test_retry_task_endpoint_clones_retryable_task(monkeypatch) -> None:
             source_ip_strategy="local_sleep",
             extra_params={
                 "task_options": {
+                    "crawl_mode": "keyword",
+                    "search_scope": "site",
                     "requested_video_limit": 20,
                     "max_pages": 5,
                     "enable_proxy": False,
                     "source_ip_strategy": "local_sleep",
-                }
+                    "enable_keyword_synonym_expansion": True,
+                    "keyword_synonym_count": 2,
+                },
+                "keyword_expansion": {
+                    "source_keyword": "retry-me",
+                    "enabled": True,
+                    "requested_synonym_count": 2,
+                    "generated_synonyms": [],
+                    "expanded_keywords": ["retry-me"],
+                    "status": "fallback",
+                    "model_name": None,
+                    "error_message": "No valid synonyms returned.",
+                    "generated_at": "2026-04-13T11:00:00Z",
+                },
             },
         )
         session.add(source_task)
@@ -278,6 +495,16 @@ def test_retry_task_endpoint_clones_retryable_task(monkeypatch) -> None:
     assert (
         payload["data"]["task"]["extra_params"]["retry_context"]["retry_of_task_id"]
         == source_task_id
+    )
+    assert (
+        payload["data"]["task"]["extra_params"]["keyword_expansion"]["status"]
+        == "pending"
+    )
+    assert (
+        payload["data"]["task"]["extra_params"]["keyword_expansion"][
+            "expanded_keywords"
+        ]
+        == ["retry-me"]
     )
 
 
@@ -396,6 +623,27 @@ def test_resume_task_endpoint_requeues_paused_task(monkeypatch) -> None:
             extra_params={
                 "dispatch": {"dispatch_generation": 3, "celery_task_id": "celery-old"},
                 "control": {"requested_action": "pause"},
+                "task_options": {
+                    "crawl_mode": "keyword",
+                    "search_scope": "site",
+                    "requested_video_limit": 20,
+                    "max_pages": 5,
+                    "enable_proxy": False,
+                    "source_ip_strategy": "local_sleep",
+                    "enable_keyword_synonym_expansion": True,
+                    "keyword_synonym_count": 1,
+                },
+                "keyword_expansion": {
+                    "source_keyword": "resume-me",
+                    "enabled": True,
+                    "requested_synonym_count": 1,
+                    "generated_synonyms": ["alias"],
+                    "expanded_keywords": ["resume-me", "alias"],
+                    "status": "success",
+                    "model_name": "gpt-4.1-mini",
+                    "error_message": None,
+                    "generated_at": "2026-04-13T12:00:00Z",
+                },
             },
         )
         session.add(task)
@@ -424,6 +672,16 @@ def test_resume_task_endpoint_requeues_paused_task(monkeypatch) -> None:
         payload["data"]["task"]["extra_params"]["dispatch"]["dispatch_generation"] == 4
     )
     assert "control" not in payload["data"]["task"]["extra_params"]
+    assert (
+        payload["data"]["task"]["extra_params"]["keyword_expansion"]["status"]
+        == "success"
+    )
+    assert (
+        payload["data"]["task"]["extra_params"]["keyword_expansion"][
+            "expanded_keywords"
+        ]
+        == ["resume-me", "alias"]
+    )
 
 
 def test_cancel_task_endpoint_marks_task_cancelled() -> None:
@@ -890,7 +1148,30 @@ def test_task_query_endpoints_return_list_detail_and_progress(monkeypatch) -> No
             processed_videos=4,
             analyzed_videos=2,
             clustered_topics=1,
-            extra_params={"crawl_stats": {"success_count": 4, "subtitle_count": 1}},
+            extra_params={
+                "task_options": {
+                    "crawl_mode": "keyword",
+                    "enable_keyword_synonym_expansion": True,
+                    "keyword_synonym_count": 2,
+                },
+                "keyword_expansion": {
+                    "source_keyword": "鏈哄櫒瀛︿範",
+                    "enabled": True,
+                    "requested_synonym_count": 2,
+                    "generated_synonyms": ["AI", "ML"],
+                    "expanded_keywords": ["鏈哄櫒瀛︿範", "AI", "ML"],
+                    "status": "success",
+                    "model_name": "gpt-4.1-mini",
+                    "error_message": None,
+                    "generated_at": "2026-04-13T13:00:00Z",
+                },
+                "crawl_stats": {
+                    "success_count": 4,
+                    "subtitle_count": 1,
+                    "search_keywords_used": ["鏈哄櫒瀛︿範", "AI", "ML"],
+                    "expanded_keyword_count": 2,
+                },
+            },
         )
         session.add(task)
         session.flush()
@@ -931,6 +1212,10 @@ def test_task_query_endpoints_return_list_detail_and_progress(monkeypatch) -> No
     detail_payload = detail_response.json()
     assert detail_payload["data"]["current_stage"] == "search"
     assert detail_payload["data"]["progress_percent"] == 40
+    assert detail_payload["data"]["keyword_expansion"]["status"] == "success"
+    assert detail_payload["data"]["keyword_expansion"]["generated_synonyms"] == ["AI", "ML"]
+    assert detail_payload["data"]["search_keywords_used"] == ["鏈哄櫒瀛︿範", "AI", "ML"]
+    assert detail_payload["data"]["expanded_keyword_count"] == 2
     assert detail_payload["data"]["logs"][-1]["message"] == (
         "Collected the first four candidate videos."
     )
@@ -940,6 +1225,13 @@ def test_task_query_endpoints_return_list_detail_and_progress(monkeypatch) -> No
     assert progress_payload["data"]["status"] == "running"
     assert progress_payload["data"]["current_stage"] == "search"
     assert progress_payload["data"]["progress_percent"] == 40
+    assert progress_payload["data"]["keyword_expansion"]["status"] == "success"
+    assert progress_payload["data"]["search_keywords_used"] == [
+        "鏈哄櫒瀛︿範",
+        "AI",
+        "ML",
+    ]
+    assert progress_payload["data"]["expanded_keyword_count"] == 2
     assert progress_payload["data"]["extra_params"]["crawl_stats"]["success_count"] == 4
     assert progress_payload["data"]["latest_log"]["stage"] == "search"
 
@@ -1231,7 +1523,350 @@ def test_task_result_endpoints_return_videos_topics_and_analysis() -> None:
     assert analysis_payload["data"]["advanced"]["momentum_topics"][0]["topic_name"] == "AI"
     assert analysis_payload["data"]["advanced"]["depth_topics"][0]["topic_name"] == "AI"
     assert analysis_payload["data"]["advanced"]["community_topics"][0]["topic_name"] == "AI"
+    assert analysis_payload["data"]["advanced"]["metric_weight_configs"]
+    assert (
+        analysis_payload["data"]["advanced"]["metric_weight_configs"][0]["metric_key"]
+        == "burst_score"
+    )
     assert analysis_payload["data"]["advanced"]["recommendations"][0]["videos"][0]["bvid"] == "BV1review"
+
+
+def test_analysis_endpoint_uses_lightweight_author_analysis_without_external_fetch(
+    monkeypatch,
+) -> None:
+    session_factory = build_session_factory()
+
+    with session_factory() as session:
+        task = CrawlTask(
+            keyword="AI",
+            status=TaskStatus.PARTIAL_SUCCESS,
+            requested_video_limit=20,
+            max_pages=5,
+            min_sleep_seconds=1.5,
+            max_sleep_seconds=5,
+            enable_proxy=False,
+            source_ip_strategy="local_sleep",
+            total_candidates=1,
+            processed_videos=1,
+            extra_params={
+                "task_options": {
+                    "hot_author_total_count": 5,
+                    "topic_hot_author_count": 1,
+                    "hot_author_video_limit": 10,
+                    "hot_author_summary_basis": "time",
+                }
+            },
+        )
+        session.add(task)
+        session.flush()
+
+        video = Video(
+            bvid="BV1authorlight",
+            aid=321,
+            title="AI Author Demo",
+            url="https://www.bilibili.com/video/BV1authorlight",
+            author_name="Author Demo",
+            author_mid="2001",
+            description="A concise AI author sample.",
+            tags=["AI", "Author"],
+            published_at=datetime(2026, 4, 7, tzinfo=timezone.utc),
+            duration_seconds=360,
+        )
+        session.add(video)
+        session.flush()
+
+        task_video = TaskVideo(
+            task_id=task.id,
+            video_id=video.id,
+            search_rank=1,
+            keyword_hit_title=True,
+            keyword_hit_description=True,
+            keyword_hit_tags=True,
+            relevance_score=Decimal("0.9100"),
+            heat_score=Decimal("0.7800"),
+            composite_score=Decimal("0.8500"),
+            is_selected=True,
+        )
+        metric_snapshot = VideoMetricSnapshot(
+            task_id=task.id,
+            video_id=video.id,
+            view_count=1800,
+            like_count=220,
+            coin_count=45,
+            favorite_count=60,
+            share_count=20,
+            reply_count=18,
+            danmaku_count=7,
+            metrics_payload={"source": "test"},
+            captured_at=datetime(2026, 4, 7, tzinfo=timezone.utc),
+        )
+        text_content = VideoTextContent(
+            task_id=task.id,
+            video_id=video.id,
+            has_description=True,
+            has_subtitle=False,
+            description_text="A concise AI author sample.",
+            subtitle_text=None,
+            combined_text="Video Description:\nA concise AI author sample.",
+            combined_text_hash="author-light-hash",
+            language_code="zh-CN",
+        )
+        session.add_all([task_video, metric_snapshot, text_content])
+        session.flush()
+        ai_summary = AiSummary(
+            task_id=task.id,
+            video_id=video.id,
+            text_content_id=text_content.id,
+            summary="This video introduces an AI creator sample.",
+            topics=["AI", "Author"],
+            primary_topic="AI",
+            tone="neutral",
+            confidence=Decimal("0.9200"),
+            model_name="gpt-test",
+            raw_response={"ok": True},
+        )
+        topic = TopicCluster(
+            task_id=task.id,
+            name="AI",
+            normalized_name="ai",
+            description="AI related videos",
+            keywords=["AI", "Author"],
+            video_count=1,
+            total_heat_score=Decimal("0.7800"),
+            average_heat_score=Decimal("0.7800"),
+            cluster_order=1,
+        )
+        session.add_all([ai_summary, topic])
+        session.flush()
+        session.add(
+            TopicVideoRelation(
+                task_id=task.id,
+                topic_cluster_id=topic.id,
+                video_id=video.id,
+                ai_summary_id=ai_summary.id,
+                relevance_score=Decimal("0.9100"),
+                is_primary=True,
+            )
+        )
+        session.commit()
+        task_id = task.id
+
+    def fail_fetch_author_videos(*args, **kwargs):
+        raise AssertionError("analysis endpoint should not fetch author videos on read")
+
+    monkeypatch.setattr(
+        "app.services.popular_author_service.PopularAuthorAnalysisService._fetch_author_videos",
+        fail_fetch_author_videos,
+    )
+
+    app.dependency_overrides[get_db_session] = build_db_override(session_factory)
+    client = TestClient(app)
+    analysis_response = client.get(
+        f"/api/tasks/{task_id}/analysis",
+        headers={"X-Request-ID": "task-analysis-light-author"},
+    )
+    app.dependency_overrides.clear()
+
+    assert analysis_response.status_code == 200
+    analysis_payload = analysis_response.json()
+    assert analysis_payload["data"]["advanced"]["popular_authors"]
+    assert analysis_payload["data"]["advanced"]["popular_authors"][0]["author_name"] == "Author Demo"
+    assert analysis_payload["data"]["advanced"]["popular_authors"][0]["fetched_video_count"] == 0
+    assert analysis_payload["data"]["advanced"]["popular_authors"][0]["videos"] == []
+
+
+def test_analysis_weights_update_endpoint_regenerates_analysis_and_report() -> None:
+    session_factory = build_session_factory()
+
+    with session_factory() as session:
+        task = CrawlTask(
+            keyword="AI",
+            status=TaskStatus.SUCCESS,
+            requested_video_limit=20,
+            max_pages=5,
+            min_sleep_seconds=1.5,
+            max_sleep_seconds=5,
+            enable_proxy=False,
+            source_ip_strategy="local_sleep",
+            total_candidates=1,
+            processed_videos=1,
+            analyzed_videos=1,
+            clustered_topics=1,
+        )
+        session.add(task)
+        session.flush()
+
+        video = Video(
+            bvid="BV1weight",
+            aid=456,
+            title="AI Weight Demo",
+            url="https://www.bilibili.com/video/BV1weight",
+            author_name="Weight UP",
+            author_mid="1002",
+            description="A sample for analysis weight updates.",
+            tags=["AI", "Weight"],
+            published_at=datetime(2026, 4, 7, tzinfo=timezone.utc),
+            duration_seconds=420,
+        )
+        session.add(video)
+        session.flush()
+
+        task_video = TaskVideo(
+            task_id=task.id,
+            video_id=video.id,
+            search_rank=1,
+            keyword_hit_title=True,
+            keyword_hit_description=True,
+            keyword_hit_tags=True,
+            relevance_score=Decimal("0.9300"),
+            heat_score=Decimal("0.7900"),
+            composite_score=Decimal("0.8600"),
+            is_selected=True,
+        )
+        metric_snapshot = VideoMetricSnapshot(
+            task_id=task.id,
+            video_id=video.id,
+            view_count=1200,
+            like_count=180,
+            coin_count=40,
+            favorite_count=52,
+            share_count=12,
+            reply_count=16,
+            danmaku_count=6,
+            metrics_payload={
+                "source": "test",
+                "search_metrics": {
+                    "play_count": 800,
+                    "like_count": 110,
+                    "favorite_count": 30,
+                    "comment_count": 8,
+                    "danmaku_count": 4,
+                },
+            },
+            captured_at=datetime(2026, 4, 7, tzinfo=timezone.utc),
+        )
+        history_snapshot = VideoMetricSnapshot(
+            task_id=task.id,
+            video_id=video.id,
+            view_count=1500,
+            like_count=220,
+            coin_count=48,
+            favorite_count=60,
+            share_count=18,
+            reply_count=20,
+            danmaku_count=9,
+            metrics_payload={"source": "history"},
+            captured_at=datetime(2026, 4, 8, tzinfo=timezone.utc),
+        )
+        text_content = VideoTextContent(
+            task_id=task.id,
+            video_id=video.id,
+            has_description=True,
+            has_subtitle=False,
+            description_text="A sample for analysis weight updates.",
+            subtitle_text=None,
+            combined_text="Video Description:\nA sample for analysis weight updates.",
+            combined_text_hash="weight-hash",
+            language_code="zh-CN",
+        )
+        session.add_all([task_video, metric_snapshot, history_snapshot, text_content])
+        session.flush()
+
+        ai_summary = AiSummary(
+            task_id=task.id,
+            video_id=video.id,
+            text_content_id=text_content.id,
+            summary="This video tracks how AI samples change after updating weights.",
+            topics=["AI", "Weight"],
+            primary_topic="AI",
+            tone="neutral",
+            confidence=Decimal("0.9500"),
+            model_name="gpt-test",
+            raw_response={"ok": True},
+        )
+        topic = TopicCluster(
+            task_id=task.id,
+            name="AI",
+            normalized_name="ai",
+            description="AI topic cluster",
+            keywords=["AI", "Weight"],
+            video_count=1,
+            total_heat_score=Decimal("0.7900"),
+            average_heat_score=Decimal("0.7900"),
+            cluster_order=1,
+        )
+        session.add_all([ai_summary, topic])
+        session.flush()
+
+        session.add(
+            TopicVideoRelation(
+                task_id=task.id,
+                topic_cluster_id=topic.id,
+                video_id=video.id,
+                ai_summary_id=ai_summary.id,
+                relevance_score=Decimal("0.9300"),
+                is_primary=True,
+            )
+        )
+        session.commit()
+        task_id = task.id
+
+    app.dependency_overrides[get_db_session] = build_db_override(session_factory)
+    client = TestClient(app)
+    response = client.post(
+        f"/api/tasks/{task_id}/analysis/weights",
+        headers={"X-Request-ID": "task-analysis-weight-update"},
+        json={
+            "metrics": [
+                {
+                    "metric_key": "burst_score",
+                    "components": [
+                        {"key": "search_growth", "weight": 0.9},
+                        {"key": "publish_velocity", "weight": 0.1},
+                        {"key": "history_velocity", "weight": 0.0},
+                    ],
+                },
+                {
+                    "metric_key": "topic_heat_index",
+                    "components": [
+                        {"key": "total_heat_score", "weight": 0.6},
+                        {"key": "average_burst_score", "weight": 0.25},
+                        {"key": "average_community_score", "weight": 0.15},
+                    ],
+                },
+            ]
+        },
+    )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["request_id"] == "task-analysis-weight-update"
+    burst_config = next(
+        item
+        for item in payload["data"]["advanced"]["metric_weight_configs"]
+        if item["metric_key"] == "burst_score"
+    )
+    assert burst_config["customized"] is True
+    assert burst_config["formula"].startswith("0.90 *")
+    assert burst_config["components"][0]["weight"] == 0.9
+    assert payload["data"]["advanced"]["data_notes"]
+
+    with session_factory() as session:
+        stored_task = session.get(CrawlTask, task_id)
+        assert stored_task is not None
+        weight_payload = stored_task.extra_params["analysis_metric_weights"]
+        assert weight_payload["updated_at"]
+        assert weight_payload["metrics"]["burst_score"]["search_growth"] == 0.9
+        assert weight_payload["metrics"]["burst_score"]["publish_velocity"] == 0.1
+        assert weight_payload["metrics"]["topic_heat_index"]["total_heat_score"] == 0.6
+        assert stored_task.extra_params["analysis_snapshot"]["advanced"]["metric_weight_configs"]
+        assert stored_task.extra_params["report_snapshot"]["generated_at"]
+        assert (
+            stored_task.extra_params["pipeline_progress"]["analysis_weight_updated_at"]
+            == weight_payload["updated_at"]
+        )
 
 
 def test_analysis_endpoints_reuse_persisted_snapshot_for_terminal_tasks(
@@ -1332,6 +1967,7 @@ def test_analysis_endpoints_reuse_persisted_snapshot_for_terminal_tasks(
                         "topic_insights": [],
                         "video_insights": [],
                         "metric_definitions": [],
+                        "metric_weight_configs": [],
                         "recommendations": [],
                         "data_notes": [],
                     },
@@ -1422,6 +2058,7 @@ def test_analysis_endpoints_reuse_persisted_snapshot_for_terminal_tasks(
     assert analysis_payload["has_topics"] is True
     assert analysis_payload["advanced"]["momentum_topics"] == []
     assert analysis_payload["advanced"]["metric_definitions"] == []
+    assert analysis_payload["advanced"]["metric_weight_configs"] == []
     assert analysis_payload["advanced"]["recommendations"] == []
 
     assert report_response.status_code == 200
@@ -1483,6 +2120,9 @@ def test_task_videos_endpoint_supports_sort_topic_filter_and_latest_snapshot() -
                     task_id=task.id,
                     video_id=old_video.id,
                     search_rank=1,
+                    matched_keywords=["AI"],
+                    primary_matched_keyword="AI",
+                    keyword_match_count=1,
                     keyword_hit_title=True,
                     keyword_hit_description=True,
                     keyword_hit_tags=True,
@@ -1495,6 +2135,9 @@ def test_task_videos_endpoint_supports_sort_topic_filter_and_latest_snapshot() -
                     task_id=task.id,
                     video_id=new_video.id,
                     search_rank=2,
+                    matched_keywords=["AI", "AIGC"],
+                    primary_matched_keyword="AI",
+                    keyword_match_count=2,
                     keyword_hit_title=True,
                     keyword_hit_description=False,
                     keyword_hit_tags=True,
@@ -1655,6 +2298,9 @@ def test_task_videos_endpoint_supports_sort_topic_filter_and_latest_snapshot() -
     assert default_payload["data"]["total"] == 2
     assert len(default_payload["data"]["items"]) == 2
     assert default_payload["data"]["items"][0]["bvid"] == "BV1old"
+    assert default_payload["data"]["items"][0]["matched_keywords"] == ["AI"]
+    assert default_payload["data"]["items"][0]["primary_matched_keyword"] == "AI"
+    assert default_payload["data"]["items"][0]["keyword_match_count"] == 1
     assert default_payload["data"]["items"][0]["metrics"]["view_count"] == 999
     assert round(default_payload["data"]["items"][0]["metrics"]["like_view_ratio"], 4) == 0.0991
 
@@ -1676,6 +2322,8 @@ def test_task_videos_endpoint_supports_sort_topic_filter_and_latest_snapshot() -
     filtered_payload = filtered_response.json()
     assert filtered_payload["data"]["total"] == 1
     assert filtered_payload["data"]["items"][0]["bvid"] == "BV1new"
+    assert filtered_payload["data"]["items"][0]["matched_keywords"] == ["AI", "AIGC"]
+    assert filtered_payload["data"]["items"][0]["keyword_match_count"] == 2
     assert filtered_payload["data"]["items"][0]["heat_score"] == 0.95
 
     assert metric_filtered_response.status_code == 200
@@ -1704,6 +2352,28 @@ def test_task_export_endpoint_supports_json_csv_and_excel_downloads() -> None:
             processed_videos=1,
             analyzed_videos=1,
             clustered_topics=1,
+            extra_params={
+                "task_options": {
+                    "crawl_mode": "keyword",
+                    "enable_keyword_synonym_expansion": True,
+                    "keyword_synonym_count": 1,
+                },
+                "keyword_expansion": {
+                    "source_keyword": "AI",
+                    "enabled": True,
+                    "requested_synonym_count": 1,
+                    "generated_synonyms": ["AIGC"],
+                    "expanded_keywords": ["AI", "AIGC"],
+                    "status": "success",
+                    "model_name": "gpt-export",
+                    "error_message": None,
+                    "generated_at": "2026-04-13T13:30:00Z",
+                },
+                "crawl_stats": {
+                    "search_keywords_used": ["AI", "AIGC"],
+                    "expanded_keyword_count": 1,
+                },
+            },
         )
         session.add(task)
         session.flush()
@@ -1727,6 +2397,9 @@ def test_task_export_endpoint_supports_json_csv_and_excel_downloads() -> None:
             task_id=task.id,
             video_id=video.id,
             search_rank=1,
+            matched_keywords=["AI", "AIGC"],
+            primary_matched_keyword="AI",
+            keyword_match_count=2,
             keyword_hit_title=True,
             keyword_hit_description=True,
             keyword_hit_tags=True,
@@ -1821,6 +2494,10 @@ def test_task_export_endpoint_supports_json_csv_and_excel_downloads() -> None:
         ),
         headers={"X-Request-ID": "task-export-json"},
     )
+    video_csv_response = client.get(
+        f"/api/tasks/{task_id}/export?dataset=videos&format=csv",
+        headers={"X-Request-ID": "task-export-video-csv"},
+    )
     csv_response = client.get(
         f"/api/tasks/{task_id}/export?dataset=topics&format=csv&topic=AI",
         headers={"X-Request-ID": "task-export-csv"},
@@ -1837,10 +2514,28 @@ def test_task_export_endpoint_supports_json_csv_and_excel_downloads() -> None:
     assert 'attachment; filename="task-' in json_response.headers["content-disposition"]
     assert json_response.json()["total"] == 1
     assert json_response.json()["items"][0]["bvid"] == "BV1export"
+    assert json_response.json()["items"][0]["original_keyword"] == "AI"
+    assert json_response.json()["items"][0]["enable_keyword_synonym_expansion"] is True
+    assert json_response.json()["items"][0]["search_keywords_used"] == "AI | AIGC"
+    assert json_response.json()["items"][0]["expanded_keyword_count"] == 1
+    assert json_response.json()["items"][0]["matched_keywords"] == "AI | AIGC"
+    assert json_response.json()["items"][0]["primary_matched_keyword"] == "AI"
+    assert json_response.json()["items"][0]["keyword_match_count"] == 2
     assert json_response.json()["items"][0]["primary_topic"] == "AI"
     assert json_response.json()["items"][0]["combined_text"] == long_combined_text
     assert json_response.json()["items"][0]["like_view_ratio"] == 0.15
     assert len(json_response.json()["items"][0]["combined_text"]) > 500
+
+    assert video_csv_response.status_code == 200
+    video_csv_text = video_csv_response.content.decode("utf-8-sig")
+    assert "original_keyword" in video_csv_text
+    assert "enable_keyword_synonym_expansion" in video_csv_text
+    assert "search_keywords_used" in video_csv_text
+    assert "matched_keywords" in video_csv_text
+    assert "primary_matched_keyword" in video_csv_text
+    assert "keyword_match_count" in video_csv_text
+    assert "AI | AIGC" in video_csv_text
+    assert video_csv_response.headers["content-disposition"].endswith('-videos.csv"')
 
     assert csv_response.status_code == 200
     csv_text = csv_response.content.decode("utf-8-sig")
