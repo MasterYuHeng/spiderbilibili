@@ -1,0 +1,183 @@
+name: spiderbilibili-app
+
+x-backend-environment: &backend-environment
+  APP_NAME: ${APP_NAME:-spiderbilibili}
+  APP_ENV: ${APP_ENV:-production}
+  APP_DEBUG: ${APP_DEBUG:-false}
+  APP_HOST: 0.0.0.0
+  APP_PORT: 8000
+  APP_API_PREFIX: ${APP_API_PREFIX:-/api}
+  APP_CORS_ORIGINS: ${APP_CORS_ORIGINS:-http://127.0.0.1:8080,http://localhost:8080}
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-spider_user}:${POSTGRES_PASSWORD:-change_me}@postgres:5432/${POSTGRES_DB:-spider_bilibili}
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: redis://redis:6379/1
+  CELERY_RESULT_BACKEND: redis://redis:6379/2
+  AI_PROVIDER: ${AI_PROVIDER:-deepseek}
+  AI_API_KEY: ${AI_API_KEY:-}
+  AI_BASE_URL: ${AI_BASE_URL:-https://api.deepseek.com}
+  AI_MODEL: ${AI_MODEL:-deepseek-chat}
+  AI_FALLBACK_MODEL: ${AI_FALLBACK_MODEL:-}
+  AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-30}
+  AI_MAX_RETRIES: ${AI_MAX_RETRIES:-3}
+  DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+  DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+  DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+  DEEPSEEK_FALLBACK_MODEL: ${DEEPSEEK_FALLBACK_MODEL:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+  OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+  OPENAI_FALLBACK_MODEL: ${OPENAI_FALLBACK_MODEL:-gpt-4.1-mini}
+  OPENAI_TIMEOUT_SECONDS: ${OPENAI_TIMEOUT_SECONDS:-30}
+  OPENAI_MAX_RETRIES: ${OPENAI_MAX_RETRIES:-3}
+  HTTP_TIMEOUT_SECONDS: ${HTTP_TIMEOUT_SECONDS:-20}
+  HTTP_MAX_RETRIES: ${HTTP_MAX_RETRIES:-3}
+  PROXY_PROVIDER: ${PROXY_PROVIDER:-}
+  HTTP_PROXY: ${HTTP_PROXY:-}
+  HTTPS_PROXY: ${HTTPS_PROXY:-}
+  BILIBILI_USER_AGENT: "${BILIBILI_USER_AGENT:-Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36}"
+  CRAWLER_MIN_SLEEP: ${CRAWLER_MIN_SLEEP:-1.5}
+  CRAWLER_MAX_SLEEP: ${CRAWLER_MAX_SLEEP:-5}
+  CRAWLER_MAX_PAGES: ${CRAWLER_MAX_PAGES:-5}
+  CRAWLER_MAX_VIDEOS: ${CRAWLER_MAX_VIDEOS:-100}
+  CRAWLER_CONCURRENCY: ${CRAWLER_CONCURRENCY:-1}
+  CRAWLER_BACKOFF_BASE_SECONDS: ${CRAWLER_BACKOFF_BASE_SECONDS:-1}
+  CRAWLER_BACKOFF_MAX_SECONDS: ${CRAWLER_BACKOFF_MAX_SECONDS:-20}
+  CRAWLER_BACKOFF_JITTER_SECONDS: ${CRAWLER_BACKOFF_JITTER_SECONDS:-0.5}
+  CRAWLER_CIRCUIT_BREAKER_FAILURE_THRESHOLD: ${CRAWLER_CIRCUIT_BREAKER_FAILURE_THRESHOLD:-4}
+  CRAWLER_CIRCUIT_BREAKER_RECOVERY_SECONDS: ${CRAWLER_CIRCUIT_BREAKER_RECOVERY_SECONDS:-60}
+  CRAWLER_ENABLE_PROXY: ${CRAWLER_ENABLE_PROXY:-false}
+  CRAWLER_RATE_LIMIT_PER_MINUTE: ${CRAWLER_RATE_LIMIT_PER_MINUTE:-20}
+  CRAWLER_SAVE_RAW_PAYLOADS: ${CRAWLER_SAVE_RAW_PAYLOADS:-true}
+  CRAWLER_RAW_DATA_DIR: /app/data/raw
+  PLAYWRIGHT_HEADLESS: ${PLAYWRIGHT_HEADLESS:-true}
+  PLAYWRIGHT_TIMEOUT_SECONDS: ${PLAYWRIGHT_TIMEOUT_SECONDS:-30}
+  PAGINATION_DEFAULT_PAGE_SIZE: ${PAGINATION_DEFAULT_PAGE_SIZE:-20}
+  PAGINATION_MAX_PAGE_SIZE: ${PAGINATION_MAX_PAGE_SIZE:-100}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_DIR: /app/logs
+  LOG_ROTATION: "${LOG_ROTATION:-10 MB}"
+  LOG_RETENTION: "${LOG_RETENTION:-7 days}"
+  WORKER_GLOBAL_TASK_CONCURRENCY: ${WORKER_GLOBAL_TASK_CONCURRENCY:-2}
+  WORKER_TASK_CONCURRENCY_WAIT_SECONDS: ${WORKER_TASK_CONCURRENCY_WAIT_SECONDS:-60}
+  WORKER_TASK_CONCURRENCY_POLL_SECONDS: ${WORKER_TASK_CONCURRENCY_POLL_SECONDS:-1}
+  WORKER_TASK_CONCURRENCY_LEASE_SECONDS: ${WORKER_TASK_CONCURRENCY_LEASE_SECONDS:-21600}
+  AI_INPUT_CHAR_LIMIT: ${AI_INPUT_CHAR_LIMIT:-2400}
+  AI_REUSE_EXISTING_RESULTS: ${AI_REUSE_EXISTING_RESULTS:-true}
+  MONITORING_ENABLED: ${MONITORING_ENABLED:-true}
+  MONITORING_REDIS_PREFIX: ${MONITORING_REDIS_PREFIX:-spiderbilibili:monitoring}
+  MONITORING_CELERY_QUEUE_NAME: ${MONITORING_CELERY_QUEUE_NAME:-celery}
+  MONITORING_WORKER_HEARTBEAT_TTL_SECONDS: ${MONITORING_WORKER_HEARTBEAT_TTL_SECONDS:-150}
+  MONITORING_WORKER_EXPECTED_COUNT: ${MONITORING_WORKER_EXPECTED_COUNT:-1}
+  ALERTING_ENABLED: ${ALERTING_ENABLED:-false}
+  ALERTING_DEDUPE_WINDOW_SECONDS: ${ALERTING_DEDUPE_WINDOW_SECONDS:-900}
+  ALERTING_REQUEST_TIMEOUT_SECONDS: ${ALERTING_REQUEST_TIMEOUT_SECONDS:-8}
+  ALERTING_WECHAT_WEBHOOK: ${ALERTING_WECHAT_WEBHOOK:-}
+  ALERTING_DINGTALK_WEBHOOK: ${ALERTING_DINGTALK_WEBHOOK:-}
+  ALERTING_EMAIL_ENABLED: ${ALERTING_EMAIL_ENABLED:-false}
+  ALERTING_EMAIL_SMTP_HOST: ${ALERTING_EMAIL_SMTP_HOST:-}
+  ALERTING_EMAIL_SMTP_PORT: ${ALERTING_EMAIL_SMTP_PORT:-587}
+  ALERTING_EMAIL_USERNAME: ${ALERTING_EMAIL_USERNAME:-}
+  ALERTING_EMAIL_PASSWORD: ${ALERTING_EMAIL_PASSWORD:-}
+  ALERTING_EMAIL_FROM: ${ALERTING_EMAIL_FROM:-}
+  ALERTING_EMAIL_TO: ${ALERTING_EMAIL_TO:-}
+  ALERTING_EMAIL_USE_TLS: ${ALERTING_EMAIL_USE_TLS:-true}
+  APP_PUBLIC_BASE_URL: ${APP_PUBLIC_BASE_URL:-http://127.0.0.1:8080}
+  TZ: ${TZ:-Asia/Shanghai}
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: spiderbilibili-app-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-spider_bilibili}
+      POSTGRES_USER: ${POSTGRES_USER:-spider_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - app_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-spider_user} -d ${POSTGRES_DB:-spider_bilibili}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    container_name: spiderbilibili-app-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - app_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: spiderbilibili-backend:app
+    container_name: spiderbilibili-app-backend
+    init: true
+    ipc: host
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment: *backend-environment
+    command: >
+      sh -c "alembic upgrade head &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    volumes:
+      - app_backend_logs:/app/logs
+      - app_backend_raw_data:/app/data/raw
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+
+  worker:
+    image: spiderbilibili-backend:app
+    container_name: spiderbilibili-app-worker
+    init: true
+    ipc: host
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment: *backend-environment
+    command: >
+      celery -A app.worker.celery_app worker
+      --loglevel=${CELERY_LOG_LEVEL:-info}
+      --concurrency=${CELERY_WORKER_CONCURRENCY:-2}
+    volumes:
+      - app_backend_logs:/app/logs
+      - app_backend_raw_data:/app/data/raw
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_APP_TITLE: ${VITE_APP_TITLE:-spiderbilibili}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+    image: spiderbilibili-nginx:app
+    container_name: spiderbilibili-app-web
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-8080}:80"
+
+volumes:
+  app_postgres_data:
+  app_redis_data:
+  app_backend_logs:
+  app_backend_raw_data:

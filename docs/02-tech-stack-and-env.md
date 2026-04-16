@@ -184,3 +184,12 @@
 - 项目级信息优先写入 `docs/00-05`
 - 操作型内容优先写入 `docs/LOCAL_SETUP.md` 和 `docs/DOCKER_SETUP.md`
 - 失去主文档地位但仍有参考价值的专题文档归档到 `docs/archive/<feature-slug>/`
+
+## 13. 本轮性能优化口径
+
+本轮不改变项目需求边界和核心架构，主要调整以下技术实现口径：
+
+- Windows 启动链路继续保留 `launch-dev.bat -> scripts/start-dev.ps1`，但启动器默认以“前端页面可访问 + 后端 API 可访问”为首要就绪条件，避免把浏览器打开和启动器返回阻塞到 Worker 完全就绪之后。
+- `scripts/start-backend.ps1` 在本地开发模式下增加 Alembic 版本对比，数据库已经处于当前 head 时跳过重复 `upgrade head`，减少重复启动耗时。
+- 任务视频列表、主题分析、报告生成相关的“最新指标快照”查询统一收敛为“按当前 task_id 先过滤，再做窗口排序”，避免对全库 `video_metric_snapshot` 做无谓排序。
+- 主题分析内部获取 Top N 视频时，优先在 SQL 层限流，避免先读取整任务全部视频再切片。

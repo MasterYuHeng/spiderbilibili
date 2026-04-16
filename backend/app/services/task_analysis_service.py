@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ValidationError
@@ -13,12 +11,12 @@ from app.services.analysis_weight_service import (
     get_metric_spec,
     resolve_metric_weight_map,
 )
+from app.services.statistics_service import StatisticsService
 from app.services.task_log_service import create_task_log
 from app.services.task_report_service import TaskReportService
 from app.services.task_result_service import get_task_analysis
 from app.services.task_service import get_task_or_raise
 from app.services.task_state_machine import is_terminal_status
-from app.services.statistics_service import StatisticsService
 
 
 def update_task_analysis_weights(
@@ -46,7 +44,10 @@ def update_task_analysis_weights(
         session,
         task=task,
         stage=TaskStage.TOPIC,
-        message="Confirmed custom analysis metric weights and restarted analysis generation.",
+        message=(
+            "Confirmed custom analysis metric weights and "
+            "restarted analysis generation."
+        ),
         payload={
             "updated_metric_keys": updated_metric_keys,
             "updated_at": updated_at.isoformat(),
@@ -77,11 +78,16 @@ def update_task_analysis_weights(
         session,
         task=task,
         stage=TaskStage.REPORT,
-        message="Re-generated analysis snapshot and task report after metric weight update.",
+        message=(
+            "Re-generated analysis snapshot and task report "
+            "after metric weight update."
+        ),
         payload={
             "updated_metric_keys": updated_metric_keys,
             "analysis_generated_at": (
-                task.extra_params.get("analysis_snapshot", {}) if isinstance(task.extra_params, dict) else {}
+                task.extra_params.get("analysis_snapshot", {})
+                if isinstance(task.extra_params, dict)
+                else {}
             ).get("generated_at"),
             "report_generated_at": report_result.generated_at.isoformat(),
         },

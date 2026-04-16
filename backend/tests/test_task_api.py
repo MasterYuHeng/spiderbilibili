@@ -115,13 +115,13 @@ def test_create_task_endpoint_persists_task_and_dispatch_metadata(monkeypatch) -
     assert payload["data"]["task"]["logs"][0]["message"] == (
         "Task created and waiting for queue dispatch."
     )
-    assert payload["data"]["task"]["extra_params"]["keyword_expansion"]["status"] == "skipped"
     assert (
-        payload["data"]["task"]["extra_params"]["keyword_expansion"][
-            "expanded_keywords"
-        ]
-        == [payload["data"]["task"]["keyword"]]
+        payload["data"]["task"]["extra_params"]["keyword_expansion"]["status"]
+        == "skipped"
     )
+    assert payload["data"]["task"]["extra_params"]["keyword_expansion"][
+        "expanded_keywords"
+    ] == [payload["data"]["task"]["keyword"]]
     assert payload["data"]["dispatch"]["celery_task_id"].startswith("celery-")
     assert observed_dispatch_snapshot["task_id"] == payload["data"]["task"]["id"]
     assert observed_dispatch_snapshot["status"] == "queued"
@@ -136,11 +136,12 @@ def test_create_task_endpoint_persists_task_and_dispatch_metadata(monkeypatch) -
         assert stored_task.extra_params["task_options"]["hot_author_total_count"] == 5
         assert stored_task.extra_params["task_options"]["topic_hot_author_count"] == 1
         assert stored_task.extra_params["task_options"]["hot_author_video_limit"] == 10
-        assert stored_task.extra_params["task_options"]["hot_author_summary_basis"] == "heat"
         assert (
-            stored_task.extra_params["task_options"][
-                "enable_keyword_synonym_expansion"
-            ]
+            stored_task.extra_params["task_options"]["hot_author_summary_basis"]
+            == "heat"
+        )
+        assert (
+            stored_task.extra_params["task_options"]["enable_keyword_synonym_expansion"]
             is False
         )
         assert stored_task.extra_params["task_options"]["keyword_synonym_count"] is None
@@ -199,7 +200,10 @@ def test_create_task_endpoint_accepts_custom_published_within_days(monkeypatch) 
     assert response.status_code == 201
     payload = response.json()
     assert payload["success"] is True
-    assert payload["data"]["task"]["extra_params"]["task_options"]["published_within_days"] == 45
+    assert (
+        payload["data"]["task"]["extra_params"]["task_options"]["published_within_days"]
+        == 45
+    )
 
     with session_factory() as session:
         stored_task = session.get(CrawlTask, payload["data"]["task"]["id"])
@@ -245,9 +249,7 @@ def test_create_hot_task_endpoint_accepts_blank_keyword(monkeypatch) -> None:
         assert stored_task.extra_params["task_options"]["crawl_mode"] == "hot"
         assert stored_task.extra_params["task_options"]["search_scope"] == "site"
         assert (
-            stored_task.extra_params["task_options"][
-                "enable_keyword_synonym_expansion"
-            ]
+            stored_task.extra_params["task_options"]["enable_keyword_synonym_expansion"]
             is False
         )
         assert stored_task.extra_params["task_options"]["keyword_synonym_count"] is None
@@ -286,15 +288,22 @@ def test_create_task_endpoint_accepts_keyword_synonym_expansion_params(
     keyword_expansion = payload["data"]["task"]["extra_params"]["keyword_expansion"]
     assert task_options["enable_keyword_synonym_expansion"] is True
     assert task_options["keyword_synonym_count"] == 2
-    assert payload["data"]["task"]["keyword_expansion"]["source_keyword"] == payload["data"]["task"]["keyword"]
+    assert (
+        payload["data"]["task"]["keyword_expansion"]["source_keyword"]
+        == payload["data"]["task"]["keyword"]
+    )
     assert payload["data"]["task"]["keyword_expansion"]["enabled"] is True
-    assert payload["data"]["task"]["search_keywords_used"] == [payload["data"]["task"]["keyword"]]
+    assert payload["data"]["task"]["search_keywords_used"] == [
+        payload["data"]["task"]["keyword"]
+    ]
     assert payload["data"]["task"]["expanded_keyword_count"] == 0
     assert keyword_expansion["source_keyword"] == payload["data"]["task"]["keyword"]
     assert keyword_expansion["enabled"] is True
     assert keyword_expansion["requested_synonym_count"] == 2
     assert keyword_expansion["generated_synonyms"] == []
-    assert keyword_expansion["expanded_keywords"] == [payload["data"]["task"]["keyword"]]
+    assert keyword_expansion["expanded_keywords"] == [
+        payload["data"]["task"]["keyword"]
+    ]
     assert keyword_expansion["status"] == "pending"
     assert keyword_expansion["model_name"] is None
     assert keyword_expansion["error_message"] is None
@@ -352,7 +361,9 @@ def test_create_hot_task_endpoint_ignores_keyword_synonym_expansion_params(
     assert keyword_expansion["generated_synonyms"] == []
 
 
-def test_create_task_endpoint_rejects_missing_keyword_synonym_count_when_enabled() -> None:
+def test_create_task_endpoint_rejects_missing_keyword_synonym_count_when_enabled() -> (
+    None
+):
     session_factory = build_session_factory()
     app.dependency_overrides[get_db_session] = build_db_override(session_factory)
 
@@ -500,12 +511,9 @@ def test_retry_task_endpoint_clones_retryable_task(monkeypatch) -> None:
         payload["data"]["task"]["extra_params"]["keyword_expansion"]["status"]
         == "pending"
     )
-    assert (
-        payload["data"]["task"]["extra_params"]["keyword_expansion"][
-            "expanded_keywords"
-        ]
-        == ["retry-me"]
-    )
+    assert payload["data"]["task"]["extra_params"]["keyword_expansion"][
+        "expanded_keywords"
+    ] == ["retry-me"]
 
 
 def test_retry_task_endpoint_rejects_non_retryable_status() -> None:
@@ -676,12 +684,9 @@ def test_resume_task_endpoint_requeues_paused_task(monkeypatch) -> None:
         payload["data"]["task"]["extra_params"]["keyword_expansion"]["status"]
         == "success"
     )
-    assert (
-        payload["data"]["task"]["extra_params"]["keyword_expansion"][
-            "expanded_keywords"
-        ]
-        == ["resume-me", "alias"]
-    )
+    assert payload["data"]["task"]["extra_params"]["keyword_expansion"][
+        "expanded_keywords"
+    ] == ["resume-me", "alias"]
 
 
 def test_cancel_task_endpoint_marks_task_cancelled() -> None:
@@ -929,7 +934,9 @@ def test_trash_endpoints_list_restore_and_permanently_delete_task() -> None:
     app.dependency_overrides[get_db_session] = build_db_override(session_factory)
     client = TestClient(app)
 
-    list_response = client.get("/api/tasks/trash", headers={"X-Request-ID": "task-trash-list"})
+    list_response = client.get(
+        "/api/tasks/trash", headers={"X-Request-ID": "task-trash-list"}
+    )
     restore_response = client.post(
         f"/api/tasks/{task_id}/restore",
         headers={"X-Request-ID": "task-trash-restore"},
@@ -984,14 +991,18 @@ def test_empty_trash_endpoint_permanently_deletes_trashed_tasks() -> None:
 
     app.dependency_overrides[get_db_session] = build_db_override(session_factory)
     client = TestClient(app)
-    response = client.delete("/api/tasks/trash", headers={"X-Request-ID": "task-trash-empty"})
+    response = client.delete(
+        "/api/tasks/trash", headers={"X-Request-ID": "task-trash-empty"}
+    )
     app.dependency_overrides.clear()
 
     assert response.status_code == 200
     assert response.json()["data"]["deleted_count"] == 1
 
     with session_factory() as session:
-        tasks = session.scalars(select(CrawlTask).order_by(CrawlTask.keyword.asc())).all()
+        tasks = session.scalars(
+            select(CrawlTask).order_by(CrawlTask.keyword.asc())
+        ).all()
         assert len(tasks) == 1
         assert tasks[0].keyword == "active-task"
 
@@ -1213,8 +1224,15 @@ def test_task_query_endpoints_return_list_detail_and_progress(monkeypatch) -> No
     assert detail_payload["data"]["current_stage"] == "search"
     assert detail_payload["data"]["progress_percent"] == 40
     assert detail_payload["data"]["keyword_expansion"]["status"] == "success"
-    assert detail_payload["data"]["keyword_expansion"]["generated_synonyms"] == ["AI", "ML"]
-    assert detail_payload["data"]["search_keywords_used"] == ["鏈哄櫒瀛︿範", "AI", "ML"]
+    assert detail_payload["data"]["keyword_expansion"]["generated_synonyms"] == [
+        "AI",
+        "ML",
+    ]
+    assert detail_payload["data"]["search_keywords_used"] == [
+        "鏈哄櫒瀛︿範",
+        "AI",
+        "ML",
+    ]
     assert detail_payload["data"]["expanded_keyword_count"] == 2
     assert detail_payload["data"]["logs"][-1]["message"] == (
         "Collected the first four candidate videos."
@@ -1520,15 +1538,23 @@ def test_task_result_endpoints_return_videos_topics_and_analysis() -> None:
     assert analysis_payload["data"]["has_ai_summaries"] is True
     assert analysis_payload["data"]["has_topics"] is True
     assert analysis_payload["data"]["top_videos"][0]["bvid"] == "BV1review"
-    assert analysis_payload["data"]["advanced"]["momentum_topics"][0]["topic_name"] == "AI"
+    assert (
+        analysis_payload["data"]["advanced"]["momentum_topics"][0]["topic_name"] == "AI"
+    )
     assert analysis_payload["data"]["advanced"]["depth_topics"][0]["topic_name"] == "AI"
-    assert analysis_payload["data"]["advanced"]["community_topics"][0]["topic_name"] == "AI"
+    assert (
+        analysis_payload["data"]["advanced"]["community_topics"][0]["topic_name"]
+        == "AI"
+    )
     assert analysis_payload["data"]["advanced"]["metric_weight_configs"]
     assert (
         analysis_payload["data"]["advanced"]["metric_weight_configs"][0]["metric_key"]
         == "burst_score"
     )
-    assert analysis_payload["data"]["advanced"]["recommendations"][0]["videos"][0]["bvid"] == "BV1review"
+    assert (
+        analysis_payload["data"]["advanced"]["recommendations"][0]["videos"][0]["bvid"]
+        == "BV1review"
+    )
 
 
 def test_analysis_endpoint_uses_lightweight_author_analysis_without_external_fetch(
@@ -1670,8 +1696,16 @@ def test_analysis_endpoint_uses_lightweight_author_analysis_without_external_fet
     assert analysis_response.status_code == 200
     analysis_payload = analysis_response.json()
     assert analysis_payload["data"]["advanced"]["popular_authors"]
-    assert analysis_payload["data"]["advanced"]["popular_authors"][0]["author_name"] == "Author Demo"
-    assert analysis_payload["data"]["advanced"]["popular_authors"][0]["fetched_video_count"] == 0
+    assert (
+        analysis_payload["data"]["advanced"]["popular_authors"][0]["author_name"]
+        == "Author Demo"
+    )
+    assert (
+        analysis_payload["data"]["advanced"]["popular_authors"][0][
+            "fetched_video_count"
+        ]
+        == 0
+    )
     assert analysis_payload["data"]["advanced"]["popular_authors"][0]["videos"] == []
 
 
@@ -1861,7 +1895,9 @@ def test_analysis_weights_update_endpoint_regenerates_analysis_and_report() -> N
         assert weight_payload["metrics"]["burst_score"]["search_growth"] == 0.9
         assert weight_payload["metrics"]["burst_score"]["publish_velocity"] == 0.1
         assert weight_payload["metrics"]["topic_heat_index"]["total_heat_score"] == 0.6
-        assert stored_task.extra_params["analysis_snapshot"]["advanced"]["metric_weight_configs"]
+        assert stored_task.extra_params["analysis_snapshot"]["advanced"][
+            "metric_weight_configs"
+        ]
         assert stored_task.extra_params["report_snapshot"]["generated_at"]
         assert (
             stored_task.extra_params["pipeline_progress"]["analysis_weight_updated_at"]
@@ -2284,10 +2320,7 @@ def test_task_videos_endpoint_supports_sort_topic_filter_and_latest_snapshot() -
         headers={"X-Request-ID": "task-videos-filtered"},
     )
     metric_filtered_response = client.get(
-        (
-            f"/api/tasks/{task_id}/videos?"
-            "min_coin_count=100&min_like_view_ratio=0.1"
-        ),
+        (f"/api/tasks/{task_id}/videos?" "min_coin_count=100&min_like_view_ratio=0.1"),
         headers={"X-Request-ID": "task-videos-metric-filtered"},
     )
 
@@ -2302,7 +2335,10 @@ def test_task_videos_endpoint_supports_sort_topic_filter_and_latest_snapshot() -
     assert default_payload["data"]["items"][0]["primary_matched_keyword"] == "AI"
     assert default_payload["data"]["items"][0]["keyword_match_count"] == 1
     assert default_payload["data"]["items"][0]["metrics"]["view_count"] == 999
-    assert round(default_payload["data"]["items"][0]["metrics"]["like_view_ratio"], 4) == 0.0991
+    assert (
+        round(default_payload["data"]["items"][0]["metrics"]["like_view_ratio"], 4)
+        == 0.0991
+    )
 
     assert sorted_response.status_code == 200
     sorted_payload = sorted_response.json()
@@ -2331,7 +2367,9 @@ def test_task_videos_endpoint_supports_sort_topic_filter_and_latest_snapshot() -
     assert metric_filtered_payload["data"]["total"] == 1
     assert metric_filtered_payload["data"]["items"][0]["bvid"] == "BV1new"
     assert metric_filtered_payload["data"]["items"][0]["metrics"]["coin_count"] == 120
-    assert metric_filtered_payload["data"]["items"][0]["metrics"]["like_view_ratio"] == 0.1
+    assert (
+        metric_filtered_payload["data"]["items"][0]["metrics"]["like_view_ratio"] == 0.1
+    )
 
 
 def test_task_export_endpoint_supports_json_csv_and_excel_downloads() -> None:

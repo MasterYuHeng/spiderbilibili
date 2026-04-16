@@ -1,0 +1,158 @@
+name: spiderbilibili-dev-full
+
+x-backend-environment: &backend-environment
+  APP_NAME: ${APP_NAME:-spiderbilibili}
+  APP_ENV: development
+  APP_DEBUG: "true"
+  APP_HOST: 0.0.0.0
+  APP_PORT: 8014
+  APP_API_PREFIX: ${APP_API_PREFIX:-/api}
+  APP_CORS_ORIGINS: ${APP_CORS_ORIGINS:-http://127.0.0.1:5174,http://localhost:5174}
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-spider_user}:${POSTGRES_PASSWORD:-spider_pass}@postgres:5432/${POSTGRES_DB:-spider_bilibili}
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: redis://redis:6379/1
+  CELERY_RESULT_BACKEND: redis://redis:6379/2
+  AI_PROVIDER: ${AI_PROVIDER:-deepseek}
+  AI_API_KEY: ${AI_API_KEY:-}
+  AI_BASE_URL: ${AI_BASE_URL:-https://api.deepseek.com}
+  AI_MODEL: ${AI_MODEL:-deepseek-chat}
+  AI_FALLBACK_MODEL: ${AI_FALLBACK_MODEL:-}
+  DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+  DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+  DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+  DEEPSEEK_FALLBACK_MODEL: ${DEEPSEEK_FALLBACK_MODEL:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+  OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+  OPENAI_FALLBACK_MODEL: ${OPENAI_FALLBACK_MODEL:-gpt-4.1-mini}
+  HTTP_TIMEOUT_SECONDS: ${HTTP_TIMEOUT_SECONDS:-20}
+  HTTP_MAX_RETRIES: ${HTTP_MAX_RETRIES:-3}
+  PROXY_PROVIDER: ${PROXY_PROVIDER:-}
+  HTTP_PROXY: ${HTTP_PROXY:-}
+  HTTPS_PROXY: ${HTTPS_PROXY:-}
+  BILIBILI_USER_AGENT: "${BILIBILI_USER_AGENT:-Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36}"
+  CRAWLER_MIN_SLEEP: ${CRAWLER_MIN_SLEEP:-1.5}
+  CRAWLER_MAX_SLEEP: ${CRAWLER_MAX_SLEEP:-5}
+  CRAWLER_MAX_PAGES: ${CRAWLER_MAX_PAGES:-5}
+  CRAWLER_MAX_VIDEOS: ${CRAWLER_MAX_VIDEOS:-100}
+  CRAWLER_CONCURRENCY: ${CRAWLER_CONCURRENCY:-1}
+  CRAWLER_ENABLE_PROXY: ${CRAWLER_ENABLE_PROXY:-false}
+  CRAWLER_RATE_LIMIT_PER_MINUTE: ${CRAWLER_RATE_LIMIT_PER_MINUTE:-20}
+  CRAWLER_SAVE_RAW_PAYLOADS: ${CRAWLER_SAVE_RAW_PAYLOADS:-true}
+  CRAWLER_RAW_DATA_DIR: /workspace/backend/data/raw
+  PLAYWRIGHT_HEADLESS: ${PLAYWRIGHT_HEADLESS:-true}
+  PLAYWRIGHT_TIMEOUT_SECONDS: ${PLAYWRIGHT_TIMEOUT_SECONDS:-30}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_DIR: /workspace/backend/logs
+  LOG_ROTATION: "${LOG_ROTATION:-10 MB}"
+  LOG_RETENTION: "${LOG_RETENTION:-7 days}"
+  WORKER_GLOBAL_TASK_CONCURRENCY: ${WORKER_GLOBAL_TASK_CONCURRENCY:-2}
+  APP_PUBLIC_BASE_URL: ${APP_PUBLIC_BASE_URL:-http://127.0.0.1:5174}
+  TZ: ${TZ:-Asia/Shanghai}
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: spiderbilibili-dev-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-spider_bilibili}
+      POSTGRES_USER: ${POSTGRES_USER:-spider_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-spider_pass}
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      - "${POSTGRES_PORT:-5434}:5432"
+    volumes:
+      - dev_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-spider_user} -d ${POSTGRES_DB:-spider_bilibili}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    container_name: spiderbilibili-dev-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6381}:6379"
+    volumes:
+      - dev_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.dev
+    image: spiderbilibili-backend:dev-full
+    container_name: spiderbilibili-dev-backend
+    init: true
+    ipc: host
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    working_dir: /workspace/backend
+    environment: *backend-environment
+    command: >
+      sh -c "alembic upgrade head &&
+      uvicorn app.main:app --host 0.0.0.0 --port 8014 --reload"
+    volumes:
+      - ./backend:/workspace/backend
+    ports:
+      - "${BACKEND_PORT:-8014}:8014"
+
+  worker:
+    image: spiderbilibili-backend:dev-full
+    container_name: spiderbilibili-dev-worker
+    init: true
+    ipc: host
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+    working_dir: /workspace/backend
+    environment: *backend-environment
+    command: >
+      celery -A app.worker.celery_app worker
+      --loglevel=${CELERY_LOG_LEVEL:-info}
+      --pool=${CELERY_POOL:-solo}
+      --concurrency=${CELERY_CONCURRENCY:-1}
+    volumes:
+      - ./backend:/workspace/backend
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile.dev
+    image: spiderbilibili-frontend:dev-full
+    container_name: spiderbilibili-dev-frontend
+    restart: unless-stopped
+    working_dir: /workspace/frontend
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://127.0.0.1:8014}
+      VITE_APP_TITLE: ${VITE_APP_TITLE:-spiderbilibili}
+      CHOKIDAR_USEPOLLING: ${CHOKIDAR_USEPOLLING:-true}
+    command: >
+      sh -c "npm install &&
+      npm run dev -- --host 0.0.0.0 --port 5174"
+    volumes:
+      - ./frontend:/workspace/frontend
+      - dev_frontend_node_modules:/workspace/frontend/node_modules
+    ports:
+      - "${FRONTEND_PORT:-5174}:5174"
+    depends_on:
+      backend:
+        condition: service_started
+
+volumes:
+  dev_postgres_data:
+  dev_redis_data:
+  dev_frontend_node_modules:

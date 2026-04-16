@@ -86,6 +86,136 @@ function Join-ProcessArgumentList {
   return (($ArgumentList | ForEach-Object { Convert-ToProcessArgumentText -Argument $_ }) -join ' ')
 }
 
+function Resolve-HostPythonCommand {
+  if (Get-Command py -ErrorAction SilentlyContinue) {
+    foreach ($candidate in @("-3.11", "-3.12", "-3")) {
+      try {
+        & py $candidate -c "import sys" 2>$null
+        if ($LASTEXITCODE -eq 0) {
+          return @{
+            Command = "py"
+            Arguments = @($candidate)
+          }
+        }
+      }
+      catch {
+      }
+    }
+  }
+
+  if (Get-Command python -ErrorAction SilentlyContinue) {
+    try {
+      & python -c "import sys" 2>$null
+      if ($LASTEXITCODE -eq 0) {
+        return @{
+          Command = "python"
+          Arguments = @()
+        }
+      }
+    }
+    catch {
+    }
+  }
+
+  throw "A usable Python runtime was not found. Please install Python and retry."
+}
+
+function Test-PythonExecutableHealthy {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$PythonPath
+  )
+
+  if (-not (Test-Path $PythonPath)) {
+    return $false
+  }
+
+  try {
+    & $PythonPath -c "import sys" 2>$null
+    return $LASTEXITCODE -eq 0
+  }
+  catch {
+    return $false
+  }
+}
+
+function Test-HttpReady {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Url,
+    [int]$TimeoutSeconds = 5
+  )
+
+  try {
+    $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec $TimeoutSeconds
+    return $response.StatusCode -ge 200 -and $response.StatusCode -lt 500
+  }
+  catch {
+    return $false
+  }
+}
+
+function Get-ListeningProcessRecords {
+  param(
+    [Parameter(Mandatory = $true)]
+    [int[]]$Ports
+  )
+
+  $records = @()
+  foreach ($port in $Ports) {
+    $connections = @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
+    foreach ($connection in $connections) {
+      $process = Get-CimInstance Win32_Process -Filter ("ProcessId = " + $connection.OwningProcess) -ErrorAction SilentlyContinue
+      if ($null -eq $process) {
+        continue
+      }
+
+      $records += [pscustomobject]@{
+        Port = $port
+        ProcessId = [int]$process.ProcessId
+        Name = [string]$process.Name
+        ExecutablePath = [string]$process.ExecutablePath
+        CommandLine = [string]$process.CommandLine
+      }
+    }
+  }
+
+  return @($records | Sort-Object ProcessId -Unique)
+}
+
+function Test-ProcessMatchesHints {
+  param(
+    [Parameter(Mandatory = $true)]
+    [pscustomobject]$ProcessRecord,
+    [Parameter(Mandatory = $true)]
+    [string[]]$Hints
+  )
+
+  $resolvedHints = @($Hints | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+  if ($resolvedHints.Count -eq 0) {
+    return $false
+  }
+
+  $haystacks = @(
+    [string]$ProcessRecord.ExecutablePath,
+    [string]$ProcessRecord.CommandLine
+  )
+
+  foreach ($haystack in $haystacks) {
+    if ([string]::IsNullOrWhiteSpace($haystack)) {
+      continue
+    }
+
+    foreach ($hint in $resolvedHints) {
+      if ($haystack.IndexOf($hint, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        return $true
+      }
+    }
+  }
+
+  return $false
+}
+
 function Wait-ContainerHealthy {
   param(
     [Parameter(Mandatory = $true)]

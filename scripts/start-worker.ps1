@@ -1,6 +1,15 @@
+param(
+  [string]$CeleryPath = ""
+)
+
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
-$celery = Join-Path $root ".venv\Scripts\celery.exe"
+$celery = if ([string]::IsNullOrWhiteSpace($CeleryPath)) {
+  Join-Path $root ".venv\Scripts\celery.exe"
+}
+else {
+  $CeleryPath
+}
 $backend = Join-Path $root "backend"
 
 if (-not (Test-Path $celery)) {

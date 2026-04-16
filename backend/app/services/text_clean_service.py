@@ -56,9 +56,7 @@ class TextCleanService:
         has_description = bool(description_text)
         has_subtitle = bool(subtitle_text)
         language_code = (
-            subtitle.language_code
-            if subtitle and subtitle.language_code
-            else "zh-CN"
+            subtitle.language_code if subtitle and subtitle.language_code else "zh-CN"
         )
 
         combined_sections = []
@@ -68,9 +66,7 @@ class TextCleanService:
             cleaned_search_summary
             and cleaned_search_summary.casefold() != cleaned_description.casefold()
         ):
-            combined_sections.append(
-                f"Video Search Summary:\n{cleaned_search_summary}"
-            )
+            combined_sections.append(f"Video Search Summary:\n{cleaned_search_summary}")
         if subtitle_text:
             combined_sections.append(f"Video Subtitle:\n{subtitle_text}")
         if not combined_sections:

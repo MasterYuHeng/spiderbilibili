@@ -128,10 +128,11 @@ class StatisticsService:
         video_rows = self._load_video_rows(task_id)
         topic_rows = self._load_topic_rows(task_id)
         history_by_video_id = self._load_video_history(
-            task_id,
-            [row.video.id for row in video_rows]
+            task_id, [row.video.id for row in video_rows]
         )
-        primary_topic_by_video_id = self._build_primary_topic_map(video_rows, topic_rows)
+        primary_topic_by_video_id = self._build_primary_topic_map(
+            video_rows, topic_rows
+        )
         video_insight_seeds = self._build_video_insight_seeds(
             video_rows,
             history_by_video_id=history_by_video_id,
@@ -150,7 +151,9 @@ class StatisticsService:
             topic_rows,
             video_insight_by_id=video_insight_by_id,
         )
-        momentum_topics = self._sort_topic_insights(base_topic_insights, mode="momentum")
+        momentum_topics = self._sort_topic_insights(
+            base_topic_insights, mode="momentum"
+        )
         depth_topics = self._sort_topic_insights(base_topic_insights, mode="depth")
         community_topics = self._sort_topic_insights(
             base_topic_insights,
@@ -236,9 +239,7 @@ class StatisticsService:
                         topic.model_dump(mode="json") for topic in result.topics
                     ],
                     "advanced": result.advanced.model_dump(mode="json"),
-                    "top_videos": [
-                        item.model_dump(mode="json") for item in top_videos
-                    ],
+                    "top_videos": [item.model_dump(mode="json") for item in top_videos],
                     "has_ai_summaries": has_ai_summaries,
                 }
             },
@@ -302,10 +303,10 @@ class StatisticsService:
     def _load_top_video_snapshot(self, task_id: str, *, limit: int) -> list:
         from app.services.task_result_service import get_task_video_results
 
-        return get_task_video_results(self.session, task_id)[:limit]
+        return get_task_video_results(self.session, task_id, limit=limit)
 
     def _load_video_rows(self, task_id: str) -> list[_VideoMetricRow]:
-        latest_snapshot_ids = self._build_latest_snapshot_ids_subquery()
+        latest_snapshot_ids = self._build_latest_snapshot_ids_subquery(task_id)
         latest_snapshot = aliased(VideoMetricSnapshot)
         statement = (
             select(TaskVideo, Video, latest_snapshot, AiSummary)
@@ -340,7 +341,7 @@ class StatisticsService:
         ]
 
     def _load_topic_rows(self, task_id: str) -> list[_TopicMetricRow]:
-        latest_snapshot_ids = self._build_latest_snapshot_ids_subquery()
+        latest_snapshot_ids = self._build_latest_snapshot_ids_subquery(task_id)
         latest_snapshot = aliased(VideoMetricSnapshot)
         statement = (
             select(TopicCluster, TopicVideoRelation, TaskVideo, Video, latest_snapshot)
@@ -508,25 +509,31 @@ class StatisticsService:
                     video_count=len(unique_video_ids),
                     total_heat_score=float(cluster.total_heat_score),
                     average_heat_score=float(cluster.average_heat_score),
-                    video_ratio=round(
-                        len(unique_video_ids) / total_videos,
-                        4,
-                    )
-                    if total_videos
-                    else 0.0,
-                    average_engagement_rate=round(
-                        engagement_total / len(topic_rows),
-                        4,
-                    )
-                    if topic_rows
-                    else 0.0,
+                    video_ratio=(
+                        round(
+                            len(unique_video_ids) / total_videos,
+                            4,
+                        )
+                        if total_videos
+                        else 0.0
+                    ),
+                    average_engagement_rate=(
+                        round(
+                            engagement_total / len(topic_rows),
+                            4,
+                        )
+                        if topic_rows
+                        else 0.0
+                    ),
                     cluster_order=cluster.cluster_order,
                     representative_video=TopicRepresentativeVideoRead(
                         video_id=representative.video.id,
                         bvid=representative.video.bvid,
                         title=representative.video.title,
                         url=representative.video.url,
-                        composite_score=float(representative.task_video.composite_score),
+                        composite_score=float(
+                            representative.task_video.composite_score
+                        ),
                     ),
                 )
             )
@@ -670,7 +677,10 @@ class StatisticsService:
     ) -> list[TaskAnalysisVideoInsightRead]:
         maxima = {
             "search_growth": max(
-                (max(item.search_to_current_view_growth_ratio or 0.0, 0.0) for item in seeds),
+                (
+                    max(item.search_to_current_view_growth_ratio or 0.0, 0.0)
+                    for item in seeds
+                ),
                 default=0.0,
             ),
             "publish_velocity": max(
@@ -681,8 +691,12 @@ class StatisticsService:
                 (item.historical_view_velocity_per_hour or 0.0 for item in seeds),
                 default=0.0,
             ),
-            "like_ratio": max((item.like_view_ratio or 0.0 for item in seeds), default=0.0),
-            "coin_ratio": max((item.coin_view_ratio or 0.0 for item in seeds), default=0.0),
+            "like_ratio": max(
+                (item.like_view_ratio or 0.0 for item in seeds), default=0.0
+            ),
+            "coin_ratio": max(
+                (item.coin_view_ratio or 0.0 for item in seeds), default=0.0
+            ),
             "favorite_ratio": max(
                 (item.favorite_view_ratio or 0.0 for item in seeds),
                 default=0.0,
@@ -695,8 +709,12 @@ class StatisticsService:
                 (item.engagement_rate or 0.0 for item in seeds),
                 default=0.0,
             ),
-            "share_ratio": max((item.share_view_ratio or 0.0 for item in seeds), default=0.0),
-            "reply_ratio": max((item.reply_view_ratio or 0.0 for item in seeds), default=0.0),
+            "share_ratio": max(
+                (item.share_view_ratio or 0.0 for item in seeds), default=0.0
+            ),
+            "reply_ratio": max(
+                (item.reply_view_ratio or 0.0 for item in seeds), default=0.0
+            ),
             "danmaku_ratio": max(
                 (item.danmaku_view_ratio or 0.0 for item in seeds),
                 default=0.0,
@@ -884,7 +902,11 @@ class StatisticsService:
                 4,
             )
             latest_publish_at = max(
-                (item.published_at for item in video_insights if item.published_at is not None),
+                (
+                    item.published_at
+                    for item in video_insights
+                    if item.published_at is not None
+                ),
                 default=None,
             )
 
@@ -908,7 +930,9 @@ class StatisticsService:
                         bvid=representative.video.bvid,
                         title=representative.video.title,
                         url=representative.video.url,
-                        composite_score=float(representative.task_video.composite_score),
+                        composite_score=float(
+                            representative.task_video.composite_score
+                        ),
                     ),
                     summary=self._build_topic_summary(
                         cluster.name,
@@ -1008,15 +1032,21 @@ class StatisticsService:
             video_ids.add(row.video.id)
             bucket_state["total_heat_score"] += float(row.task_video.heat_score)
             bucket_state["burst_scores"].append(video_insight.burst_score or 0.0)
-            bucket_state["community_scores"].append(video_insight.community_score or 0.0)
+            bucket_state["community_scores"].append(
+                video_insight.community_score or 0.0
+            )
 
         trends: list[TaskAnalysisTopicTrendRead] = []
         for topic_id, bucket_map in grouped.items():
             points: list[TaskAnalysisTopicTrendPointRead] = []
-            for bucket in sorted(bucket_map, key=lambda value: (value == "unknown", value)):
+            for bucket in sorted(
+                bucket_map, key=lambda value: (value == "unknown", value)
+            ):
                 bucket_state = bucket_map[bucket]
                 video_count = len(bucket_state["video_ids"])
-                average_burst_score = self._average_nullable(bucket_state["burst_scores"])
+                average_burst_score = self._average_nullable(
+                    bucket_state["burst_scores"]
+                )
                 average_community_score = self._average_nullable(
                     bucket_state["community_scores"]
                 )
@@ -1080,7 +1110,9 @@ class StatisticsService:
         if not topic_insights:
             return TaskAnalysisLatestHotTopicRead()
 
-        max_heat_score = max((item.total_heat_score for item in topic_insights), default=0.0)
+        max_heat_score = max(
+            (item.total_heat_score for item in topic_insights), default=0.0
+        )
         evolution_by_topic_id = {item.topic_id: item for item in topic_evolution}
         now = utc_now()
 
@@ -1110,13 +1142,21 @@ class StatisticsService:
         topic_score, topic = scored_topics[0]
         evolution = evolution_by_topic_id.get(topic.topic_id)
 
+        average_community_score = topic.average_community_score or 0
         supporting_points = [
-            f"综合热点得分 {topic_score:.2f}，主题总热度 {topic.total_heat_score:.2f}。",
-            f"爆发力均值 {topic.average_burst_score or 0:.2f}，社区扩散均值 {topic.average_community_score or 0:.2f}。",
+            (
+                f"综合热点得分 {topic_score:.2f}，"
+                f"主题总热度 {topic.total_heat_score:.2f}。"
+            ),
+            (
+                f"爆发力均值 {topic.average_burst_score or 0:.2f}，"
+                f"社区扩散均值 {average_community_score:.2f}。"
+            ),
         ]
         if evolution is not None and evolution.latest_bucket is not None:
             supporting_points.append(
-                f"发布时间线最新高点出现在 {evolution.latest_bucket}，热度指数 {evolution.latest_topic_heat_index or 0:.2f}。"
+                f"发布时间线最新高点出现在 {evolution.latest_bucket}，"
+                f"热度指数 {evolution.latest_topic_heat_index or 0:.2f}。"
             )
         if topic.representative_video is not None:
             supporting_points.append(
@@ -1215,7 +1255,8 @@ class StatisticsService:
                 "适合做趋势判断，不等同于平台后台口径。"
             ),
             (
-                f"当前结果中有 {historical_videos}/{total_videos} 条视频具备跨任务历史快照，"
+                f"当前结果中有 {historical_videos}/{total_videos} "
+                "条视频具备跨任务历史快照，"
                 "这些视频的增长率和热度演化判断更可靠。"
             ),
             (
@@ -1308,7 +1349,7 @@ class StatisticsService:
         )
 
     @staticmethod
-    def _build_latest_snapshot_ids_subquery():
+    def _build_latest_snapshot_ids_subquery(task_id: str):
         ranked = (
             select(
                 VideoMetricSnapshot.id.label("snapshot_id"),
@@ -1327,7 +1368,9 @@ class StatisticsService:
                     ),
                 )
                 .label("row_number"),
-            ).subquery()
+            )
+            .where(VideoMetricSnapshot.task_id == task_id)
+            .subquery()
         )
         return (
             select(

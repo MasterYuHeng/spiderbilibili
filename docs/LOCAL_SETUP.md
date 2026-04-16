@@ -1,36 +1,72 @@
 # 本地开发与环境配置
 
-> 文档角色：本文件只负责“如何在本地把项目跑起来”。项目级技术栈、环境基线和文档分层口径以 `docs/02-tech-stack-and-env.md` 为准。
+> 文档角色：本文件只负责“本地部署”和“本地开发”两类链路。Docker 侧完整说明见 `docs/DOCKER_SETUP.md`。
 
-## 1. 适用场景
+## 1. 先选模式
 
-适合以下场景：
-- 在 Windows / macOS / Linux 上手动启动项目
-- 单独调试前端、后端或 Worker
-- 需要自行修改环境变量
-- 不想使用 Windows 一键启动器
+本地有两种模式：
 
-如果你是 Windows 用户，且只是想先体验项目，优先使用根目录的：
+### 模式 A：轻量本地运行
+
+适合：
+- 只想在本机开箱即用运行
+- 尽量少装宿主机依赖
+- 不想本机安装 Node
+
+特点：
+- 宿主机安装轻量 Python 运行依赖
+- 前端页面由 Docker 容器提供
+- 重依赖按功能首次使用时再自动安装
+
+入口：
+- `launch-app.bat`
+- `close-app.bat`
+
+### 模式 B：完整本地开发
+
+适合：
+- 需要看源码和改代码
+- 需要完整前后端开发体验
+- 需要一次性装齐重依赖
+
+特点：
+- 宿主机安装完整 Python 依赖
+- 宿主机安装前端 `node_modules`
+- 前后端和 Worker 都直接在本机运行
+
+入口：
 - `launch-dev.bat`
 - `close-dev.bat`
 
 ## 2. 前置要求
 
-推荐版本：
+### 模式 A：轻量本地运行
+
 - Git
-- Python 3.11
+- Python 3.11 或 3.12
+- Docker Desktop 或 Docker Engine + Docker Compose v2
+
+### 模式 B：完整本地开发
+
+- Git
+- Python 3.11 或 3.12
 - Node.js 20 LTS 或更高版本
 - npm 10+
 - Docker Desktop 或 Docker Engine + Docker Compose v2
 
-建议先确认以下命令都能正常执行：
+建议先确认以下命令可用：
 
 ```powershell
 git --version
 python --version
-npm --version
 docker --version
 docker compose version
+```
+
+完整本地开发再额外确认：
+
+```powershell
+npm --version
 ```
 
 ## 3. 获取项目
@@ -40,11 +76,108 @@ git clone <your-repo-url>
 cd spiderbilibili
 ```
 
-## 4. 启动基础设施
+## 4. 轻量本地运行
 
-本项目本地开发默认依赖容器里的 PostgreSQL 和 Redis。
+### 4.1 一键启动
 
-启动：
+```powershell
+.\launch-app.bat
+```
+
+### 4.2 一键关闭
+
+```powershell
+.\close-app.bat
+```
+
+### 4.3 这条链路会做什么
+
+- 自动创建 `backend/.env`
+- 自动创建 `.venv-app`
+- 安装 `backend/requirements.runtime.txt`
+- 启动容器里的 PostgreSQL 和 Redis
+- 启动容器里的静态前端页面
+- 在宿主机启动后端和 Worker
+
+### 4.4 默认地址
+
+- Web：`http://127.0.0.1:8080`
+- API：`http://127.0.0.1:8014/api`
+- 健康检查：`http://127.0.0.1:8014/api/health`
+
+如果 `8080` 已被占用，启动器会自动切换到下一个可用端口。
+
+### 4.5 轻量依赖说明
+
+轻量模式默认安装：
+- `backend/requirements.runtime.txt`
+
+不默认安装，但会在第一次真正用到对应功能时自动安装：
+- `openai`
+- `playwright`
+- `cryptography`
+- `openpyxl`
+- `jieba`
+- `prometheus-client`
+
+对应场景：
+- AI 摘要、分析、报告
+- 浏览器登录态导入
+- Excel 导出
+- 主题提取与分词
+- 监控指标
+
+## 5. 完整本地开发
+
+### 5.1 一键启动
+
+```powershell
+.\launch-dev.bat
+```
+
+### 5.2 一键关闭
+
+```powershell
+.\close-dev.bat
+```
+
+### 5.3 这条链路会做什么
+
+- 自动创建 `backend/.env`
+- 自动创建 `.venv`
+- 安装 `backend/requirements.full.txt`
+- 安装前端 `node_modules`
+- 启动容器里的 PostgreSQL 和 Redis
+- 在宿主机启动后端、Worker、Vite 前端
+
+### 5.4 默认地址
+
+- 前端：`http://127.0.0.1:5174`
+- API：`http://127.0.0.1:8014/api`
+- 健康检查：`http://127.0.0.1:8014/api/health`
+
+### 5.5 如果你要手动安装完整依赖
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r backend\requirements.full.txt
+.\.venv\Scripts\python.exe -m playwright install chromium
+```
+
+前端：
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+## 6. 启动基础设施
+
+无论是轻量本地运行还是完整本地开发，本地链路默认都依赖容器里的 PostgreSQL 和 Redis。
+
+手动启动：
 
 ```powershell
 docker compose up -d
@@ -66,7 +199,7 @@ docker compose ps
 docker compose down
 ```
 
-## 5. 配置后端环境变量
+## 7. 配置后端环境变量
 
 先复制模板：
 
@@ -74,13 +207,13 @@ docker compose down
 Copy-Item backend/.env.example backend/.env
 ```
 
-本地开发默认通常不需要改这些地址：
+本地默认通常不需要改这些地址：
 - `DATABASE_URL`
 - `REDIS_URL`
 - `CELERY_BROKER_URL`
 - `CELERY_RESULT_BACKEND`
 
-需要你按实际情况填写的主要是：
+需要按实际情况填写的主要是：
 - `AI_PROVIDER`
 - `AI_API_KEY` 或 `DEEPSEEK_API_KEY` / `OPENAI_API_KEY`
 - `BILIBILI_COOKIE`
@@ -89,66 +222,14 @@ Copy-Item backend/.env.example backend/.env
 - 不配置 AI Key，系统通常仍可启动，但 AI 相关功能会受限
 - 不配置 Bilibili 登录态，也能运行，但采集稳定性和结果可见性可能下降
 
-## 6. 安装后端依赖
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
-.\.venv\Scripts\python.exe -m playwright install chromium
-```
-
-## 7. 初始化数据库
-
-```powershell
-cd backend
-..\.venv\Scripts\python.exe -m alembic upgrade head
-cd ..
-```
-
-说明：
-- `scripts/start-backend.ps1` 启动前也会自动执行迁移
-- 但第一次本地初始化时，手动跑一遍更容易定位问题
-
-## 8. 启动后端
-
-```powershell
-.\scripts\start-backend.ps1
-```
-
-默认地址：
-- API：`http://127.0.0.1:8014/api`
-- 健康检查：`http://127.0.0.1:8014/api/health`
-
-## 9. 启动 Worker
-
-```powershell
-.\scripts\start-worker.ps1
-```
-
-说明：
-- 只启动后端不启动 Worker 时，项目页面可能能打开
-- 但任务执行、异步分析和部分运行健康状态会不完整
-
-## 10. 启动前端
-
-如果你需要改前端，进入前端目录：
-
-```powershell
-cd frontend
-npm install
-npm run dev
-```
-
-默认地址：
-- 前端：`http://127.0.0.1:5174`
-
-## 11. 前端环境变量说明
+## 8. 前端环境变量说明
 
 模板文件：
 - `frontend/.env.example`
 
-默认情况下，前端开发服务会把 `/api` 自动代理到 `http://127.0.0.1:8014`，所以本地开发通常不需要创建 `frontend/.env`。
+说明：
+- 完整本地开发模式下，Vite 默认把 `/api` 代理到 `http://127.0.0.1:8014`
+- 轻量本地运行模式使用构建后的静态前端，不需要本机创建 `frontend/.env`
 
 只有在以下场景才需要创建：
 - 前端连远程后端
@@ -160,29 +241,36 @@ npm run dev
 VITE_API_BASE_URL=https://your-api-domain.com
 ```
 
-## 12. 首次启动后的建议配置
+## 9. 首次启动后的建议配置
 
 启动成功后，建议优先进入前端“系统设置”页面完成：
 
-### 12.1 AI Key
+### 9.1 AI Key
 
 可在页面中直接填写并保存，也可放到 `backend/.env`。
 
-### 12.2 Bilibili 登录态
+### 9.2 Bilibili 登录态
 
 可在页面中一键读取本机浏览器登录态，也可手动粘贴 Cookie。
 
-## 13. 最小自检清单
+## 10. 最小自检清单
 
-本地启动完成后，至少确认：
+### 轻量本地运行
+
+1. `http://127.0.0.1:8014/api/health` 返回 `200`
+2. Web 页面可打开
+3. Worker 已启动
+4. 可以进入任务创建页
+
+### 完整本地开发
 
 1. `docker compose ps` 里 PostgreSQL 和 Redis 正常运行
 2. `http://127.0.0.1:8014/api/health` 返回 `200`
-3. 前端页面可打开
+3. `http://127.0.0.1:5174` 可访问
 4. Worker 已启动
 5. 可以进入任务创建页
 
-## 14. 常见问题
+## 11. 常见问题
 
 ### PowerShell 不允许执行脚本
 
@@ -192,13 +280,13 @@ VITE_API_BASE_URL=https://your-api-domain.com
 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ```
 
-### `.venv` 创建失败
+### `.venv-app` 或 `.venv` 创建失败
 
 优先检查：
-- 是否安装了 Python 3.11
-- `python` 或 `py -3.11` 是否可用
+- 是否安装了 Python 3.11 或 3.12
+- `python` 或 `py -3.12` 是否可用
 
-### 前端能打开，但接口报错
+### 页面能打开，但接口报错
 
 优先检查：
 - 后端是否已启动
@@ -215,10 +303,10 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
 ### Playwright 安装失败
 
-可重试：
+完整本地开发可手动重试：
 
 ```powershell
 .\.venv\Scripts\python.exe -m playwright install chromium
 ```
 
-如果网络环境较严格，建议确认本机能正常下载浏览器运行时。
+轻量本地运行则在首次使用浏览器能力时自动补装。若网络受限，建议确认本机能访问 Playwright 浏览器运行时下载源。

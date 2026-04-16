@@ -316,7 +316,7 @@
 
 <script setup lang="ts">
 import { ElMessage } from 'element-plus'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
 import { getErrorMessage, isRequestCanceled } from '@/api/client'
@@ -328,8 +328,6 @@ import type {
   TaskProgressPayload,
   TaskStatus,
 } from '@/api/types'
-import AuthorComparisonChart from '@/components/charts/AuthorComparisonChart.vue'
-import AuthorVideoMetricsChart from '@/components/charts/AuthorVideoMetricsChart.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import InsightText from '@/components/common/InsightText.vue'
 import StatCard from '@/components/common/StatCard.vue'
@@ -344,6 +342,13 @@ import {
   formatScore,
 } from '@/utils/format'
 import { isActiveTaskStatus } from '@/utils/taskStatus'
+
+const AuthorComparisonChart = defineAsyncComponent(
+  () => import('@/components/charts/AuthorComparisonChart.vue'),
+)
+const AuthorVideoMetricsChart = defineAsyncComponent(
+  () => import('@/components/charts/AuthorVideoMetricsChart.vue'),
+)
 
 const route = useRoute()
 const workspaceStore = useTaskWorkspaceStore()
@@ -595,6 +600,7 @@ async function refreshAll() {
 }
 
 watch(taskId, () => {
+  clearTimer()
   abortPendingRequests()
   analysis.value = null
   taskProgress.value = null

@@ -587,10 +587,12 @@ async function fetchTaskProgress() {
   }
 }
 
-async function fetchVideos() {
+async function fetchVideos(options: { silent?: boolean } = {}) {
   const controller = replaceController(videosController)
   videosController = controller
-  loading.value = true
+  if (!payload.value || !options.silent) {
+    loading.value = true
+  }
   try {
     const response = await getTaskVideos(taskId.value, buildQueryParams(), {
       signal: controller.signal,
@@ -641,7 +643,7 @@ async function pollTaskProgress() {
     if (shouldRefreshVideos || shouldRefreshTopics) {
       await Promise.all([
         shouldRefreshTopics ? fetchTopics() : Promise.resolve(),
-        shouldRefreshVideos ? fetchVideos() : Promise.resolve(),
+        shouldRefreshVideos ? fetchVideos({ silent: true }) : Promise.resolve(),
       ])
     }
   } catch (error) {
@@ -695,6 +697,7 @@ async function handleExport() {
 }
 
 watch(taskId, async () => {
+  clearTimer()
   abortPendingRequests()
   workspaceStore.setCurrentTaskId(taskId.value)
   syncFiltersFromStore()

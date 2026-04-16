@@ -63,9 +63,9 @@ def get_task_logs(
 def get_task_log_count(session: Session, task_id: str) -> int:
     return int(
         session.scalar(
-            select(func.count()).select_from(CrawlTaskLog).where(
-                CrawlTaskLog.task_id == task_id
-            )
+            select(func.count())
+            .select_from(CrawlTaskLog)
+            .where(CrawlTaskLog.task_id == task_id)
         )
         or 0
     )

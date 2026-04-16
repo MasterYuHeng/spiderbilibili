@@ -8,10 +8,10 @@ from decimal import Decimal
 from io import BytesIO, StringIO
 from typing import Any
 
-from openpyxl import Workbook
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.optional_dependencies import ensure_optional_dependency
 from app.models.analysis import AiSummary
 from app.schemas.task import TaskTopicRead
 from app.services.task_result_service import (
@@ -339,7 +339,8 @@ class TaskExportService:
 
     @staticmethod
     def _build_excel_bytes(table: ExportTable) -> bytes:
-        workbook = Workbook()
+        workbook_module = ensure_optional_dependency("openpyxl")
+        workbook = workbook_module.Workbook()
         sheet = workbook.active
         sheet.title = table.sheet_name
         sheet.append(table.columns)

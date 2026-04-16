@@ -4,12 +4,12 @@ import re
 from dataclasses import dataclass
 from decimal import Decimal
 
-import jieba.analyse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.core.optional_dependencies import ensure_optional_dependency
 from app.models.analysis import AiSummary
 from app.models.enums import LogLevel, TaskStage
 from app.models.task import CrawlTask, TaskVideo
@@ -630,7 +630,8 @@ class VideoAiService:
 
         plain_text = self._plain_text(target.text_content.combined_text)
         if len(normalized) < resolved_min_topic_count:
-            extracted_keywords = jieba.analyse.extract_tags(
+            jieba_analyse = ensure_optional_dependency("jieba", "jieba.analyse")
+            extracted_keywords = jieba_analyse.extract_tags(
                 f"{target.video.title} {plain_text}",
                 topK=resolved_max_topic_count * 3,
             )
@@ -728,7 +729,8 @@ class VideoAiService:
         fallback_primary_topic: str,
     ) -> str:
         plain_text = self._plain_text(target.text_content.combined_text)
-        extracted_keywords = jieba.analyse.extract_tags(
+        jieba_analyse = ensure_optional_dependency("jieba", "jieba.analyse")
+        extracted_keywords = jieba_analyse.extract_tags(
             f"{target.video.title} {plain_text}",
             topK=8,
         )

@@ -10,7 +10,6 @@ from __future__ import annotations
 from alembic import op
 import sqlalchemy as sa
 
-
 # revision identifiers, used by Alembic.
 revision = "b56a6f7d9c21"
 down_revision = "a4e749af8841"
@@ -24,7 +23,9 @@ def upgrade() -> None:
         batch_op.add_column(
             sa.Column("primary_matched_keyword", sa.String(length=255), nullable=True)
         )
-        batch_op.add_column(sa.Column("keyword_match_count", sa.Integer(), nullable=True))
+        batch_op.add_column(
+            sa.Column("keyword_match_count", sa.Integer(), nullable=True)
+        )
         batch_op.create_index(
             "ix_task_video_primary_matched_keyword",
             ["primary_matched_keyword"],
@@ -50,7 +51,9 @@ def upgrade() -> None:
     )
 
     with op.batch_alter_table("task_video") as batch_op:
-        batch_op.alter_column("matched_keywords", existing_type=sa.JSON(), nullable=False)
+        batch_op.alter_column(
+            "matched_keywords", existing_type=sa.JSON(), nullable=False
+        )
         batch_op.alter_column(
             "keyword_match_count",
             existing_type=sa.Integer(),

@@ -124,10 +124,14 @@ def resolve_ai_client_settings(
             or None
         )
         key_source = (
-            "runtime" if runtime_api_key else "environment" if resolved_api_key else "unset"
+            "runtime"
+            if runtime_api_key
+            else "environment" if resolved_api_key else "unset"
         )
     elif resolved_provider == AI_PROVIDER_OPENAI:
-        resolved_api_key = _first_non_empty(settings.ai_api_key, settings.openai_api_key)
+        resolved_api_key = _first_non_empty(
+            settings.ai_api_key, settings.openai_api_key
+        )
         resolved_base_url = _first_non_empty(
             settings.ai_base_url,
             settings.openai_base_url,
@@ -179,16 +183,20 @@ def resolve_ai_client_settings(
     resolved_timeout_seconds = (
         float(settings.ai_timeout_seconds)
         if settings.ai_timeout_seconds is not None
-        else float(settings.openai_timeout_seconds)
-        if settings.openai_timeout_seconds is not None
-        else float(preset["timeout_seconds"])
+        else (
+            float(settings.openai_timeout_seconds)
+            if settings.openai_timeout_seconds is not None
+            else float(preset["timeout_seconds"])
+        )
     )
     resolved_max_retries = (
         int(settings.ai_max_retries)
         if settings.ai_max_retries is not None
-        else int(settings.openai_max_retries)
-        if settings.openai_max_retries is not None
-        else int(preset["max_retries"])
+        else (
+            int(settings.openai_max_retries)
+            if settings.openai_max_retries is not None
+            else int(preset["max_retries"])
+        )
     )
 
     return {
@@ -227,7 +235,9 @@ def update_bilibili_runtime_auth_config(
         config_name="Bilibili runtime auth",
         config_group="crawler",
         config_value=normalized_payload,
-        description="Runtime Bilibili authentication settings managed from the frontend.",
+        description=(
+            "Runtime Bilibili authentication settings " "managed from the frontend."
+        ),
         is_active=True,
     )
 
@@ -260,7 +270,8 @@ def resolve_bilibili_auth_settings(
     has_runtime_auth = bool(runtime_cookie) or any(runtime_values.values())
     has_environment_auth = bool(environment_cookie) or any(environment_values.values())
     resolved_values = {
-        attr_name: runtime_values.get(attr_name) or environment_values.get(attr_name, "")
+        attr_name: runtime_values.get(attr_name)
+        or environment_values.get(attr_name, "")
         for _cookie_name, attr_name in BILIBILI_COOKIE_FIELD_MAP
     }
     resolved_cookie = _compose_bilibili_cookie_string(resolved_values)
@@ -289,7 +300,9 @@ def resolve_bilibili_auth_settings(
         "bilibili_buvid4": resolved_values.get("bilibili_buvid4", ""),
         "cookie_configured": bool(resolved_cookie),
         "key_source": (
-            "runtime" if has_runtime_auth else "environment" if has_environment_auth else "unset"
+            "runtime"
+            if has_runtime_auth
+            else "environment" if has_environment_auth else "unset"
         ),
         "account_profile": account_profile,
         "import_source": import_source,
@@ -403,7 +416,10 @@ def get_ai_summary_defaults(
         "summary_max_length": int(summary_defaults.get("summary_max_length", 200)),
         "topic_count": max(
             1,
-            min(int(summary_defaults.get("topic_count", max_topic_count)), max_topic_count),
+            min(
+                int(summary_defaults.get("topic_count", max_topic_count)),
+                max_topic_count,
+            ),
         ),
         "prompt_version": str(summary_defaults.get("prompt_version", "v1")),
         "temperature": float(summary_defaults.get("temperature", 0.2)),
@@ -460,7 +476,10 @@ def get_topic_clustering_defaults(session: Session) -> dict[str, Any]:
         "min_cluster_size": int(clustering_defaults.get("min_cluster_size", 2)),
         "max_cluster_count": max(
             1,
-            min(int(clustering_defaults.get("max_cluster_count", TOPIC_LIMIT_CAP)), TOPIC_LIMIT_CAP),
+            min(
+                int(clustering_defaults.get("max_cluster_count", TOPIC_LIMIT_CAP)),
+                TOPIC_LIMIT_CAP,
+            ),
         ),
         "fallback_primary_topic": str(
             clustering_defaults.get("fallback_primary_topic", "视频主题")

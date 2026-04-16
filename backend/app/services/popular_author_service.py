@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass, field
 from statistics import median
 from typing import Any
@@ -9,15 +9,13 @@ from typing import Any
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.crawler.browser_client import BilibiliBrowserClient
 from app.crawler.client import BilibiliHttpClient
 from app.crawler.detail_spider import BilibiliDetailSpider
 from app.crawler.uploader_spider import BilibiliUploaderSpider
-from app.core.config import get_settings
 from app.models.base import utc_now
 from app.models.task import CrawlTask
-from app.services.ai_client import AiPromptBundle, OpenAICompatibleAiClient
-from app.services.system_config_service import build_bilibili_runtime_settings
 from app.schemas.task import (
     TaskAnalysisAuthorRepresentativeVideoRead,
     TaskAnalysisAuthorVideoRead,
@@ -26,12 +24,16 @@ from app.schemas.task import (
     TaskAnalysisTopicInsightRead,
     TaskAnalysisVideoInsightRead,
 )
+from app.services.ai_client import AiPromptBundle, OpenAICompatibleAiClient
+from app.services.system_config_service import build_bilibili_runtime_settings
 
 
 @dataclass(slots=True)
 class PopularAuthorAnalysisResult:
     popular_authors: list[TaskAnalysisPopularAuthorRead] = field(default_factory=list)
-    topic_hot_authors: list[TaskAnalysisTopicHotAuthorRead] = field(default_factory=list)
+    topic_hot_authors: list[TaskAnalysisTopicHotAuthorRead] = field(
+        default_factory=list
+    )
     author_analysis_notes: list[str] = field(default_factory=list)
 
 
@@ -111,7 +113,9 @@ class PopularAuthorAnalysisService:
         author_map = self._aggregate_authors(video_insights)
         if not author_map:
             return PopularAuthorAnalysisResult(
-                author_analysis_notes=["当前任务视频缺少 up 主信息，暂时无法生成热门 up 主分析。"]
+                author_analysis_notes=[
+                    "当前任务视频缺少 up 主信息，暂时无法生成热门 up 主分析。"
+                ]
             )
 
         self._score_authors(author_map)
@@ -130,7 +134,9 @@ class PopularAuthorAnalysisService:
         if hot_author_total_count > 0:
             for aggregate in ranked_authors[:hot_author_total_count]:
                 aggregate.selection_reasons.add("overall_hot")
-                selected_keys.append(self._author_key(aggregate.author_mid, aggregate.author_name))
+                selected_keys.append(
+                    self._author_key(aggregate.author_mid, aggregate.author_name)
+                )
 
         topic_hot_authors = self._build_topic_hot_authors(
             topic_insights=topic_insights,
@@ -140,9 +146,7 @@ class PopularAuthorAnalysisService:
         )
 
         selected_aggregates = [
-            author_map[key]
-            for key in dict.fromkeys(selected_keys)
-            if key in author_map
+            author_map[key] for key in dict.fromkeys(selected_keys) if key in author_map
         ]
         selected_aggregates.sort(
             key=lambda item: (
@@ -156,7 +160,9 @@ class PopularAuthorAnalysisService:
         fetched_view_averages = [
             self._source_average_view_count(item) for item in selected_aggregates
         ]
-        baseline_median_view = median(fetched_view_averages) if fetched_view_averages else 0.0
+        baseline_median_view = (
+            median(fetched_view_averages) if fetched_view_averages else 0.0
+        )
 
         popular_authors = [
             self._build_author_read(
@@ -249,8 +255,7 @@ class PopularAuthorAnalysisService:
             summary_basis=summary_basis,
         )
         dominant_topics = [
-            topic_name
-            for topic_name, _count in aggregate.topic_names.most_common(3)
+            topic_name for topic_name, _count in aggregate.topic_names.most_common(3)
         ]
         ai_insights = self._build_author_ai_insights(
             aggregate=aggregate,
@@ -267,10 +272,14 @@ class PopularAuthorAnalysisService:
             video.model_copy(
                 update={
                     "ai_summary": (
-                        str(video_ai_map.get(video.bvid, {}).get("summary") or "").strip()
+                        str(
+                            video_ai_map.get(video.bvid, {}).get("summary") or ""
+                        ).strip()
                         or video.summary
                     ),
-                    "content_focus": list(video_ai_map.get(video.bvid, {}).get("focus") or []),
+                    "content_focus": list(
+                        video_ai_map.get(video.bvid, {}).get("focus") or []
+                    ),
                 }
             )
             for video in fetched_videos
@@ -300,7 +309,9 @@ class PopularAuthorAnalysisService:
             source_topic_count=len(aggregate.topic_names),
             source_total_heat_score=self._source_total_heat_score(aggregate),
             source_total_composite_score=self._source_total_composite_score(aggregate),
-            source_average_engagement_rate=self._source_average_engagement_rate(aggregate),
+            source_average_engagement_rate=self._source_average_engagement_rate(
+                aggregate
+            ),
             source_average_view_count=self._source_average_view_count(aggregate),
             popularity_score=aggregate.popularity_score,
             dominant_topics=dominant_topics,
@@ -346,12 +357,14 @@ class PopularAuthorAnalysisService:
         summary_basis: str,
     ) -> TaskAnalysisPopularAuthorRead:
         dominant_topics = [
-            topic_name
-            for topic_name, _count in aggregate.topic_names.most_common(3)
+            topic_name for topic_name, _count in aggregate.topic_names.most_common(3)
         ]
+        source_video_count = len(aggregate.source_videos)
+        dominant_topic_text = " / ".join(dominant_topics) or "多主题"
         summary_text = (
-            f"{aggregate.author_name} 在当前热点样本中共出现 {len(aggregate.source_videos)} 次，"
-            f"主要关联主题为 {(' / '.join(dominant_topics) or '多主题')}。"
+            f"{aggregate.author_name} 在当前热点样本中共出现 "
+            f"{source_video_count} 次，"
+            f"主要关联主题为 {dominant_topic_text}。"
         )
         analysis_points = [
             (
@@ -360,18 +373,20 @@ class PopularAuthorAnalysisService:
                 f"平均播放 {self._source_average_view_count(aggregate):.0f}。"
             ),
             (
-                f"当前为本地轻量分析结果，未触发创作者主页二次抓取；"
-                f"结论基于任务内已抓到的热点视频样本。"
+                "当前为本地轻量分析结果，未触发创作者主页二次抓取；"
+                "结论基于任务内已抓到的热点视频样本。"
             ),
         ]
         return TaskAnalysisPopularAuthorRead(
             author_name=aggregate.author_name,
             author_mid=aggregate.author_mid,
-            source_video_count=len(aggregate.source_videos),
+            source_video_count=source_video_count,
             source_topic_count=len(aggregate.topic_names),
             source_total_heat_score=self._source_total_heat_score(aggregate),
             source_total_composite_score=self._source_total_composite_score(aggregate),
-            source_average_engagement_rate=self._source_average_engagement_rate(aggregate),
+            source_average_engagement_rate=self._source_average_engagement_rate(
+                aggregate
+            ),
             source_average_view_count=self._source_average_view_count(aggregate),
             popularity_score=aggregate.popularity_score,
             dominant_topics=dominant_topics,
@@ -402,7 +417,9 @@ class PopularAuthorAnalysisService:
             source_topic_count=len(aggregate.topic_names),
             source_total_heat_score=self._source_total_heat_score(aggregate),
             source_total_composite_score=self._source_total_composite_score(aggregate),
-            source_average_engagement_rate=self._source_average_engagement_rate(aggregate),
+            source_average_engagement_rate=self._source_average_engagement_rate(
+                aggregate
+            ),
             source_average_view_count=self._source_average_view_count(aggregate),
             popularity_score=aggregate.popularity_score,
             dominant_topics=[
@@ -500,7 +517,9 @@ class PopularAuthorAnalysisService:
                     )
                 )
             except Exception:
-                like_view_ratio = self._ratio(candidate.like_count, candidate.play_count)
+                like_view_ratio = self._ratio(
+                    candidate.like_count, candidate.play_count
+                )
                 engagement_rate = self._engagement_rate(
                     candidate.play_count,
                     candidate.like_count,
@@ -551,7 +570,10 @@ class PopularAuthorAnalysisService:
         )
         if not fetched_videos:
             return fallback
-        if not hasattr(self.ai_client, "is_available") or not self.ai_client.is_available():
+        if (
+            not hasattr(self.ai_client, "is_available")
+            or not self.ai_client.is_available()
+        ):
             return fallback
 
         context = {
@@ -584,23 +606,30 @@ class PopularAuthorAnalysisService:
             system_prompt=(
                 "你是一名负责分析 B 站创作者内容风格的中文研究助理。"
                 "请只输出 JSON 对象，不要输出额外说明。"
-                'JSON 必须包含 creator_profile、recent_content_summary、content_strategy、'
-                'content_keywords、videos 五个字段。'
+                "JSON 必须包含 creator_profile、recent_content_summary、"
+                "content_strategy、"
+                "content_keywords、videos 五个字段。"
                 "content_strategy 返回 3 条以内的可读中文结论。"
                 "content_keywords 返回 3 到 8 个关键词。"
                 "videos 里的每一项都必须包含 bvid、summary、focus。"
-                "summary 需要基于视频标题、描述、标签和数据，写成 35 到 90 字的中文内容总结。"
+                "summary 需要基于视频标题、描述、标签和数据，"
+                "写成 35 到 90 字的中文内容总结。"
                 "focus 返回 1 到 3 个内容重点词。"
             ),
             user_prompt=(
-                "请基于以下 up 主资料，总结其近期内容方向、创作侧重和每条视频的具体内容重点：\n"
+                "请基于以下 up 主资料，总结其近期内容方向、"
+                "创作侧重和每条视频的具体内容重点：\n"
                 f"{json.dumps(context, ensure_ascii=False)}"
             ),
             model=(
-                self.ai_client.default_model if hasattr(self.ai_client, "default_model") else ""
+                self.ai_client.default_model
+                if hasattr(self.ai_client, "default_model")
+                else ""
             ),
             fallback_model=(
-                self.ai_client.fallback_model if hasattr(self.ai_client, "fallback_model") else None
+                self.ai_client.fallback_model
+                if hasattr(self.ai_client, "fallback_model")
+                else None
             ),
             temperature=0.4,
         )
@@ -613,12 +642,16 @@ class PopularAuthorAnalysisService:
                     {
                         "bvid": item.bvid,
                         "summary": (item.summary or "").strip(),
-                        "focus": [value.strip() for value in item.focus if value.strip()][:3],
+                        "focus": [
+                            value.strip() for value in item.focus if value.strip()
+                        ][:3],
                     }
                 )
             return {
                 "creator_profile": (payload.creator_profile or "").strip(),
-                "recent_content_summary": (payload.recent_content_summary or "").strip(),
+                "recent_content_summary": (
+                    payload.recent_content_summary or ""
+                ).strip(),
                 "content_strategy": [
                     value.strip() for value in payload.content_strategy if value.strip()
                 ][:3],
@@ -654,13 +687,15 @@ class PopularAuthorAnalysisService:
             )
 
         basis_label = "最近发布" if summary_basis == "time" else "热度最高"
+        recent_sample_text = recent_titles or "暂无可用样本"
         creator_profile = (
             f"{aggregate.author_name} 在当前热点样本中与 {topic_text} 的关联度较高，"
             f"同时兼具 {len(aggregate.source_videos)} 条热点样本支撑。"
         )
         recent_content_summary = (
-            f"按“{basis_label}”补抓后，{aggregate.author_name} 近期重点围绕 {topic_text} 持续输出，"
-            f"代表内容包括 {recent_titles or '暂无可用样本'}。"
+            f"按“{basis_label}”补抓后，{aggregate.author_name} "
+            f"近期重点围绕 {topic_text} 持续输出，"
+            f"代表内容包括 {recent_sample_text}。"
         )
         content_strategy = [
             f"内容主轴集中在 {topic_text}。",
@@ -672,8 +707,7 @@ class PopularAuthorAnalysisService:
             "recent_content_summary": recent_content_summary,
             "content_strategy": content_strategy,
             "content_keywords": [
-                keyword
-                for keyword, _count in keyword_counter.most_common(6)
+                keyword for keyword, _count in keyword_counter.most_common(6)
             ]
             or dominant_topics[:6],
             "videos": video_items,
@@ -713,21 +747,29 @@ class PopularAuthorAnalysisService:
             (self._source_total_composite_score(item) for item in author_map.values()),
             default=0.0,
         )
-        max_video_count = max((len(item.source_videos) for item in author_map.values()), default=0)
+        max_video_count = max(
+            (len(item.source_videos) for item in author_map.values()), default=0
+        )
         max_engagement = max(
-            (self._source_average_engagement_rate(item) for item in author_map.values()),
+            (
+                self._source_average_engagement_rate(item)
+                for item in author_map.values()
+            ),
             default=0.0,
         )
         for aggregate in author_map.values():
             aggregate.popularity_score = round(
-                0.40 * self._normalize(self._source_total_heat_score(aggregate), max_heat)
+                0.40
+                * self._normalize(self._source_total_heat_score(aggregate), max_heat)
                 + 0.30
                 * self._normalize(
                     self._source_total_composite_score(aggregate),
                     max_composite,
                 )
                 + 0.20
-                * self._normalize(float(len(aggregate.source_videos)), float(max_video_count))
+                * self._normalize(
+                    float(len(aggregate.source_videos)), float(max_video_count)
+                )
                 + 0.10
                 * self._normalize(
                     self._source_average_engagement_rate(aggregate),
@@ -749,7 +791,11 @@ class PopularAuthorAnalysisService:
             style_tags.append(f"{dominant_topics[0]}持续输出")
 
         average_duration = self._average(
-            [float(item.duration_seconds or 0) for item in fetched_videos if item.duration_seconds]
+            [
+                float(item.duration_seconds or 0)
+                for item in fetched_videos
+                if item.duration_seconds
+            ]
         )
         if average_duration >= 1200:
             style_tags.append("长视频")
@@ -762,7 +808,9 @@ class PopularAuthorAnalysisService:
         if average_engagement >= 0.12:
             style_tags.append("互动密集")
 
-        average_view = self._average([float(item.view_count) for item in fetched_videos])
+        average_view = self._average(
+            [float(item.view_count) for item in fetched_videos]
+        )
         if average_view > 0 and average_view >= baseline_median_view:
             style_tags.append("播放体量高")
 
@@ -789,24 +837,30 @@ class PopularAuthorAnalysisService:
         if not fetched_videos:
             if aggregate.author_mid:
                 return (
-                    f"{aggregate.author_name} 在当前热点样本里表现突出，但这次没有成功补抓到用于二次总结的视频。"
+                    f"{aggregate.author_name} 在当前热点样本里表现突出，"
+                    "但这次没有成功补抓到用于二次总结的视频。"
                 )
             return (
-                f"{aggregate.author_name} 在当前热点样本里表现突出，但当前任务没有拿到可用于二次抓取的 up 主 mid。"
+                f"{aggregate.author_name} 在当前热点样本里表现突出，"
+                "但当前任务没有拿到可用于二次抓取的 up 主 mid。"
             )
 
         basis_label = "最近发布" if summary_basis == "time" else "热度最高"
         top_titles = "、".join(item.title for item in fetched_videos[:3])
-        average_view = self._average([float(item.view_count) for item in fetched_videos])
-        average_engagement = self._average_nullable(
-            [item.engagement_rate for item in fetched_videos]
-        ) or 0.0
+        average_view = self._average(
+            [float(item.view_count) for item in fetched_videos]
+        )
+        average_engagement = (
+            self._average_nullable([item.engagement_rate for item in fetched_videos])
+            or 0.0
+        )
         topic_text = " / ".join(dominant_topics) if dominant_topics else "多主题"
         return (
             f"{aggregate.author_name} 由当前热点视频样本汇总进入热门 up 主名单。"
             f"进一步按“{basis_label}”补抓 {len(fetched_videos)} 条视频后，"
             f"其近期内容主要围绕 {topic_text} 展开，平均播放约 {average_view:.0f}，"
-            f"平均互动率约 {average_engagement * 100:.2f}%，代表视频包括 {top_titles}。"
+            f"平均互动率约 {average_engagement * 100:.2f}%，"
+            f"代表视频包括 {top_titles}。"
         )
 
     def _build_analysis_points(
@@ -819,31 +873,42 @@ class PopularAuthorAnalysisService:
     ) -> list[str]:
         source_heat = self._source_total_heat_score(aggregate)
         source_view = self._source_average_view_count(aggregate)
+        dominant_topic_text = "、".join(dominant_topics) or "多主题"
         points = [
             (
                 f"在当前热点样本中贡献了 {len(aggregate.source_videos)} 条视频，"
                 f"累计热度分 {source_heat:.2f}，平均播放 {source_view:.0f}。"
             ),
             (
-                f"热点覆盖主题主要集中在 {('、'.join(dominant_topics) or '多主题')}，"
+                f"热点覆盖主题主要集中在 {dominant_topic_text}，"
                 f"说明该 up 主与当前任务的热点主题耦合度较高。"
             ),
         ]
         if fetched_videos:
             average_duration = self._average(
-                [float(item.duration_seconds or 0) for item in fetched_videos if item.duration_seconds]
+                [
+                    float(item.duration_seconds or 0)
+                    for item in fetched_videos
+                    if item.duration_seconds
+                ]
             )
-            average_like_ratio = self._average_nullable(
-                [item.like_view_ratio for item in fetched_videos]
-            ) or 0.0
+            average_like_ratio = (
+                self._average_nullable(
+                    [item.like_view_ratio for item in fetched_videos]
+                )
+                or 0.0
+            )
             points.append(
                 (
                     f"按“{'时间' if summary_basis == 'time' else '热度'}”补抓视频后，"
-                    f"平均时长 {average_duration / 60:.1f} 分钟，平均点赞率 {average_like_ratio * 100:.2f}%。"
+                    f"平均时长 {average_duration / 60:.1f} 分钟，"
+                    f"平均点赞率 {average_like_ratio * 100:.2f}%。"
                 )
             )
         else:
-            points.append("当前未完成 up 主视频二次抓取，因此画像主要基于热点样本本身。")
+            points.append(
+                "当前未完成 up 主视频二次抓取，因此画像主要基于热点样本本身。"
+            )
         return points[:3]
 
     def _build_notes(
@@ -856,17 +921,21 @@ class PopularAuthorAnalysisService:
         if not popular_authors:
             return []
         missing_mid_count = sum(1 for item in popular_authors if not item.author_mid)
+        basis_label = "时间" if summary_basis == "time" else "热度"
         notes = [
             (
-                f"热门 up 主画像基于当前热点视频汇总生成，再按“{'时间' if summary_basis == 'time' else '热度'}”"
+                f"热门 up 主画像基于当前热点视频汇总生成，再按“{basis_label}”"
                 f"补抓每位 up 主最多 {hot_author_video_limit} 条视频做二次总结。"
             )
         ]
         if summary_basis == "heat":
-            notes.append("“热度”抓取当前使用 up 主投稿列表的播放排序 `click` 作为近似热度依据。")
+            notes.append(
+                "“热度”抓取当前使用 up 主投稿列表的播放排序 `click` 作为近似热度依据。"
+            )
         if missing_mid_count > 0:
             notes.append(
-                f"有 {missing_mid_count} 位热门 up 主缺少稳定 mid，只能保留热点样本内的作者画像，无法继续抓取其投稿列表。"
+                f"有 {missing_mid_count} 位热门 up 主缺少稳定 mid，"
+                "只能保留热点样本内的作者画像，无法继续抓取其投稿列表。"
             )
         return notes
 
@@ -899,11 +968,17 @@ class PopularAuthorAnalysisService:
     def _source_total_composite_score(aggregate: _SourceAuthorAggregate) -> float:
         return round(sum(item.composite_score for item in aggregate.source_videos), 4)
 
-    def _source_average_engagement_rate(self, aggregate: _SourceAuthorAggregate) -> float:
-        return self._average([item.engagement_rate or 0.0 for item in aggregate.source_videos])
+    def _source_average_engagement_rate(
+        self, aggregate: _SourceAuthorAggregate
+    ) -> float:
+        return self._average(
+            [item.engagement_rate or 0.0 for item in aggregate.source_videos]
+        )
 
     def _source_average_view_count(self, aggregate: _SourceAuthorAggregate) -> float:
-        return self._average([float(item.view_count) for item in aggregate.source_videos])
+        return self._average(
+            [float(item.view_count) for item in aggregate.source_videos]
+        )
 
     @staticmethod
     def _topic_heat_score(

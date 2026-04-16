@@ -2,6 +2,12 @@
 .idea/
 .vscode/
 
+# Common env files
+.env
+.env.*
+!.env.example
+!.env.*.example
+
 # Python
 __pycache__/
 *.py[cod]
@@ -14,19 +20,20 @@ htmlcov/
 
 # Virtual environments
 .venv/
+.venv-app/
 venv/
 
 # Backend env files
 backend/.env
 backend/.env.*
 !backend/.env.example
-docker/.env.production
 backend/data/
 backend/logs/
 
 # Frontend
 frontend/node_modules/
 frontend/dist/
+frontend/.vite/
 frontend/.env
 frontend/.env.*
 !frontend/.env.example
@@ -36,6 +43,7 @@ frontend/.env.*.local
 # Docker env files
 docker/.env
 docker/.env.*
+!docker/.env.*.example
 !docker/.env.production.example
 
 # Logs

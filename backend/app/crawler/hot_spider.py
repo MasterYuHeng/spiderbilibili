@@ -82,7 +82,9 @@ class BilibiliHotSpider:
             referer=self.http_client.site_origin,
         )
         if self.raw_archive is not None:
-            self.raw_archive.save_json("hot", f"ranking_partition_{partition_tid}", payload)
+            self.raw_archive.save_json(
+                "hot", f"ranking_partition_{partition_tid}", payload
+            )
         return self.parse_partition_ranking_data(payload, partition_tid=partition_tid)
 
     def _fetch_payload(
@@ -126,9 +128,11 @@ class BilibiliHotSpider:
             keyword="",
             page=page,
             page_size=page_size,
-            total_results=(page * page_size)
-            if no_more
-            else max(page * page_size, len(raw_results)),
+            total_results=(
+                (page * page_size)
+                if no_more
+                else max(page * page_size, len(raw_results))
+            ),
             total_pages=page if no_more else page + 1,
             candidates=candidates,
             raw_payload=payload,

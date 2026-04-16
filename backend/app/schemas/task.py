@@ -103,7 +103,9 @@ class TaskCreateRequest(BaseModel):
             self.keyword = "当前热度"
 
         if self.search_scope == "partition" and self.partition_tid is None:
-            raise ValueError("partition_tid is required when search_scope is partition.")
+            raise ValueError(
+                "partition_tid is required when search_scope is partition."
+            )
 
         if self.search_scope != "partition":
             self.partition_tid = None
@@ -134,7 +136,8 @@ class TaskCreateRequest(BaseModel):
 
         if self.keyword_synonym_count is None:
             raise ValueError(
-                "keyword_synonym_count is required when keyword synonym expansion is enabled."
+                "keyword_synonym_count is required when "
+                "keyword synonym expansion is enabled."
             )
 
         if self.keyword_synonym_count not in ALLOWED_KEYWORD_SYNONYM_COUNTS:
@@ -627,9 +630,7 @@ class TaskAnalysisAdvancedRead(BaseModel):
     metric_weight_configs: list[TaskAnalysisMetricWeightConfigRead] = Field(
         default_factory=list
     )
-    recommendations: list[TaskAnalysisRecommendationRead] = Field(
-        default_factory=list
-    )
+    recommendations: list[TaskAnalysisRecommendationRead] = Field(default_factory=list)
     popular_authors: list[TaskAnalysisPopularAuthorRead] = Field(default_factory=list)
     topic_hot_authors: list[TaskAnalysisTopicHotAuthorRead] = Field(
         default_factory=list
@@ -682,7 +683,9 @@ class TaskReportPayload(BaseModel):
     featured_videos: list[TaskAnalysisVideoInsightRead] = Field(default_factory=list)
     recommendations: list[TaskAnalysisRecommendationRead] = Field(default_factory=list)
     popular_authors: list[TaskAnalysisPopularAuthorRead] = Field(default_factory=list)
-    topic_hot_authors: list[TaskAnalysisTopicHotAuthorRead] = Field(default_factory=list)
+    topic_hot_authors: list[TaskAnalysisTopicHotAuthorRead] = Field(
+        default_factory=list
+    )
     sections: list[TaskReportSectionRead] = Field(default_factory=list)
     ai_outputs: list[TaskReportAiOutputRead] = Field(default_factory=list)
     report_markdown: str

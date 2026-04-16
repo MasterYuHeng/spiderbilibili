@@ -145,9 +145,7 @@ def test_crawl_pipeline_service_updates_task_summary_and_logs() -> None:
         assert any(log.stage == TaskStage.TEXT for log in logs)
         assert any(log.level == LogLevel.WARNING for log in logs)
 
-        stored_video = session.scalar(
-            select(Video).where(Video.bvid == "BV1success")
-        )
+        stored_video = session.scalar(select(Video).where(Video.bvid == "BV1success"))
         assert stored_video is not None
         assert stored_video.title
 
@@ -220,8 +218,7 @@ def test_crawl_pipeline_service_is_idempotent_for_same_task_outputs() -> None:
         assert len(subtitle_segments) == 1
 
 
-def test_crawl_pipeline_service_does_not_reset_previous_outputs_before_search_success(
-) -> None:
+def test_crawl_pipeline_preserves_outputs_before_search_success() -> None:
     class FailingSearchSpider:
         def search_keyword(self, keyword: str, *, max_pages: int, limit: int):
             from app.crawler.exceptions import BilibiliRequestError
@@ -364,8 +361,7 @@ def test_crawl_pipeline_service_filters_candidates_by_recent_publish_window() ->
         assert task.extra_params["crawl_stats"]["filtered_out_count"] == 1
 
 
-def test_crawl_pipeline_service_persists_search_summary_fallback(
-) -> None:
+def test_crawl_pipeline_service_persists_search_summary_fallback() -> None:
     class SearchSummaryOnlySearchSpider:
         def search_keyword(self, keyword: str, *, max_pages: int, limit: int):
             candidate = build_search_candidate(
@@ -430,7 +426,9 @@ def test_crawl_pipeline_service_persists_search_summary_fallback(
 def test_crawl_pipeline_service_runs_keyword_expansion_before_search() -> None:
     search_spider = KeywordAwareSearchSpider(
         {
-            "和平精英": [build_search_candidate("BV1origin", "和平精英", search_rank=1)],
+            "和平精英": [
+                build_search_candidate("BV1origin", "和平精英", search_rank=1)
+            ],
             "吃鸡": [build_search_candidate("BV1synonym", "吃鸡", search_rank=1)],
         }
     )
@@ -504,7 +502,9 @@ def test_crawl_pipeline_service_runs_keyword_expansion_before_search() -> None:
 def test_crawl_pipeline_service_reuses_persisted_keyword_expansion() -> None:
     search_spider = KeywordAwareSearchSpider(
         {
-            "和平精英": [build_search_candidate("BV1origin", "和平精英", search_rank=1)],
+            "和平精英": [
+                build_search_candidate("BV1origin", "和平精英", search_rank=1)
+            ],
             "吃鸡": [build_search_candidate("BV1synonym", "吃鸡", search_rank=1)],
         }
     )
@@ -573,10 +573,14 @@ def test_crawl_pipeline_service_reuses_persisted_keyword_expansion() -> None:
         assert not any(log.message == "Starting keyword expansion." for log in logs)
 
 
-def test_crawl_pipeline_service_falls_back_to_source_keyword_when_expansion_fails() -> None:
+def test_crawl_pipeline_service_falls_back_to_source_keyword_when_expansion_fails() -> (
+    None
+):
     search_spider = KeywordAwareSearchSpider(
         {
-            "和平精英": [build_search_candidate("BV1origin", "和平精英", search_rank=1)],
+            "和平精英": [
+                build_search_candidate("BV1origin", "和平精英", search_rank=1)
+            ],
             "吃鸡": [build_search_candidate("BV1synonym", "吃鸡", search_rank=1)],
         }
     )
@@ -642,7 +646,7 @@ def test_crawl_pipeline_service_falls_back_to_source_keyword_when_expansion_fail
         )
 
 
-def test_crawl_pipeline_service_merges_duplicate_candidates_across_search_keywords() -> None:
+def test_crawl_pipeline_merges_duplicate_candidates_across_keywords() -> None:
     search_spider = KeywordAwareSearchSpider(
         {
             "和平精英": [build_search_candidate("BV1dup", "和平精英", search_rank=8)],
@@ -704,7 +708,8 @@ def test_crawl_pipeline_service_merges_duplicate_candidates_across_search_keywor
             "吃鸡",
         ]
         assert (
-            task.extra_params["crawl_preview"][0]["primary_matched_keyword"] == "和平精英"
+            task.extra_params["crawl_preview"][0]["primary_matched_keyword"]
+            == "和平精英"
         )
         assert task.extra_params["crawl_preview"][0]["keyword_match_count"] == 2
 

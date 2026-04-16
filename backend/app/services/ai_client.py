@@ -7,13 +7,6 @@ from typing import Any, Protocol
 
 import httpx
 from sqlalchemy.orm import Session
-from openai import (
-    APIConnectionError,
-    APIError,
-    APITimeoutError,
-    OpenAI,
-    RateLimitError,
-)
 from tenacity import (
     Retrying,
     retry_if_exception_type,
@@ -24,6 +17,7 @@ from tenacity import (
 from app.core.config import get_settings
 from app.core.exceptions import ServiceUnavailableError
 from app.core.logging import get_logger
+from app.core.optional_dependencies import ensure_optional_dependency
 from app.schemas.analysis import VideoAiSummaryDraft
 from app.services.system_config_service import resolve_ai_client_settings
 
@@ -54,16 +48,13 @@ class AiJsonResponse:
 
 
 class AiSummaryClient(Protocol):
-    def is_available(self) -> bool:
-        ...
+    def is_available(self) -> bool: ...
 
-    def generate_summary(self, prompt: AiPromptBundle) -> AiStructuredResponse:
-        ...
+    def generate_summary(self, prompt: AiPromptBundle) -> AiStructuredResponse: ...
 
 
 class OpenAiChatCompletionsClient(Protocol):
-    def create(self, **kwargs: Any) -> Any:
-        ...
+    def create(self, **kwargs: Any) -> Any: ...
 
 
 class OpenAiChatClient(Protocol):
@@ -87,6 +78,7 @@ class OpenAICompatibleAiClient:
         max_retries: int,
         openai_client: Any | None = None,
     ) -> None:
+        openai_runtime = _load_openai_runtime()
         self.provider_name = provider_name
         self.api_key = api_key
         self.base_url = base_url
@@ -95,7 +87,7 @@ class OpenAICompatibleAiClient:
         self.timeout_seconds = timeout_seconds
         self.max_retries = max(1, max_retries)
         self.logger = get_logger(__name__)
-        self.client = openai_client or OpenAI(
+        self.client = openai_client or openai_runtime["OpenAI"](
             api_key=api_key or "missing-api-key",
             base_url=base_url,
             timeout=timeout_seconds,
@@ -192,15 +184,16 @@ class OpenAICompatibleAiClient:
         )
 
     def _request_completion(self, prompt: AiPromptBundle, *, model_name: str) -> Any:
+        openai_runtime = _load_openai_runtime()
         retryer = Retrying(
             stop=stop_after_attempt(self.max_retries),
             wait=wait_exponential(multiplier=1, min=1, max=8),
             retry=retry_if_exception_type(
                 (
-                    APIConnectionError,
-                    APIError,
-                    APITimeoutError,
-                    RateLimitError,
+                    openai_runtime["APIConnectionError"],
+                    openai_runtime["APIError"],
+                    openai_runtime["APITimeoutError"],
+                    openai_runtime["RateLimitError"],
                     httpx.HTTPError,
                 )
             ),
@@ -267,3 +260,14 @@ class OpenAICompatibleAiClient:
             return candidate
 
         raise ValueError("AI response did not contain a valid JSON object.")
+
+
+def _load_openai_runtime() -> dict[str, Any]:
+    openai_module = ensure_optional_dependency("openai")
+    return {
+        "APIConnectionError": openai_module.APIConnectionError,
+        "APIError": openai_module.APIError,
+        "APITimeoutError": openai_module.APITimeoutError,
+        "OpenAI": openai_module.OpenAI,
+        "RateLimitError": openai_module.RateLimitError,
+    }

@@ -765,7 +765,7 @@
 
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import { getErrorMessage, isRequestCanceled } from '@/api/client'
@@ -788,13 +788,6 @@ import type {
   TaskProgressPayload,
   TaskTopic,
 } from '@/api/types'
-import CommunityTrendChart from '@/components/charts/CommunityTrendChart.vue'
-import DepthTrendChart from '@/components/charts/DepthTrendChart.vue'
-import TopicDonutChart from '@/components/charts/TopicDonutChart.vue'
-import TopicEvolutionComparisonChart from '@/components/charts/TopicEvolutionComparisonChart.vue'
-import TopicEvolutionChart from '@/components/charts/TopicEvolutionChart.vue'
-import TopicHeatBarChart from '@/components/charts/TopicHeatBarChart.vue'
-import VideoHistoryChart from '@/components/charts/VideoHistoryChart.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import InsightText from '@/components/common/InsightText.vue'
 import StatCard from '@/components/common/StatCard.vue'
@@ -809,6 +802,28 @@ import {
   triggerBlobDownload,
 } from '@/utils/format'
 import { isActiveTaskStatus } from '@/utils/taskStatus'
+
+const CommunityTrendChart = defineAsyncComponent(
+  () => import('@/components/charts/CommunityTrendChart.vue'),
+)
+const DepthTrendChart = defineAsyncComponent(
+  () => import('@/components/charts/DepthTrendChart.vue'),
+)
+const TopicDonutChart = defineAsyncComponent(
+  () => import('@/components/charts/TopicDonutChart.vue'),
+)
+const TopicEvolutionComparisonChart = defineAsyncComponent(
+  () => import('@/components/charts/TopicEvolutionComparisonChart.vue'),
+)
+const TopicEvolutionChart = defineAsyncComponent(
+  () => import('@/components/charts/TopicEvolutionChart.vue'),
+)
+const TopicHeatBarChart = defineAsyncComponent(
+  () => import('@/components/charts/TopicHeatBarChart.vue'),
+)
+const VideoHistoryChart = defineAsyncComponent(
+  () => import('@/components/charts/VideoHistoryChart.vue'),
+)
 
 type PublishedGranularity = 'day' | 'week' | 'month'
 type HistoryGranularity = 'raw' | 'day' | 'week'
@@ -1693,10 +1708,12 @@ function applyAnalysisResponse(response: TaskAnalysisPayload) {
   syncHistoryWindow()
 }
 
-async function fetchAnalysis() {
+async function fetchAnalysis(options: { silent?: boolean } = {}) {
   const controller = replaceController(analysisController)
   analysisController = controller
-  loading.value = true
+  if (!analysis.value || !options.silent) {
+    loading.value = true
+  }
   try {
     workspaceStore.setCurrentTaskId(taskId.value)
     const response = await getTaskAnalysis(taskId.value, { signal: controller.signal })
@@ -1751,7 +1768,7 @@ async function pollTaskProgress() {
     const currentLogId = taskProgress.value?.latest_log?.id ?? ''
     const currentStatus = taskProgress.value?.status
     if (currentLogId !== previousLogId || currentStatus !== previousStatus) {
-      await fetchAnalysis()
+      await fetchAnalysis({ silent: true })
     }
   } catch (error) {
     if (!isRequestCanceled(error)) {
@@ -1818,6 +1835,7 @@ async function handleReanalyzeWithUpdatedWeights() {
 }
 
 watch(taskId, () => {
+  clearTimer()
   abortPendingRequests()
   selectedTopicName.value = ''
   compareMode.value = false

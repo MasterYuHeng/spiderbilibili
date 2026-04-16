@@ -1,4 +1,5 @@
 """Crawler package."""
+
 from app.crawler.browser_client import BilibiliBrowserClient
 from app.crawler.client import BilibiliHttpClient
 from app.crawler.dedupe import dedupe_search_candidates

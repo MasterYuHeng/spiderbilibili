@@ -10,14 +10,10 @@ from functools import lru_cache
 from typing import Any, Protocol, TypedDict, cast
 
 import redis
-from prometheus_client import CollectorRegistry, Counter, Histogram, generate_latest
-from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily, Metric
-from prometheus_client.gc_collector import GCCollector
-from prometheus_client.platform_collector import PlatformCollector
-from prometheus_client.process_collector import ProcessCollector
 from sqlalchemy import func, select
 
 from app.core.config import get_settings
+from app.core.optional_dependencies import ensure_optional_dependency
 from app.db.session import check_database_connection, get_session_factory
 from app.models.base import utc_now
 from app.models.task import CrawlTask
@@ -55,32 +51,23 @@ class MonitoringSnapshot:
 
 
 class MonitoringRedisClient(Protocol):
-    def set(self, name: str, value: str, *, nx: bool, ex: int) -> object:
-        ...
+    def set(self, name: str, value: str, *, nx: bool, ex: int) -> object: ...
 
-    def delete(self, *names: str) -> object:
-        ...
+    def delete(self, *names: str) -> object: ...
 
-    def setex(self, name: str, time: int, value: str) -> object:
-        ...
+    def setex(self, name: str, time: int, value: str) -> object: ...
 
-    def scan_iter(self, *, match: str) -> Iterable[str]:
-        ...
+    def scan_iter(self, *, match: str) -> Iterable[str]: ...
 
-    def mget(self, keys: list[str]) -> list[str | None]:
-        ...
+    def mget(self, keys: list[str]) -> list[str | None]: ...
 
-    def llen(self, name: str) -> object:
-        ...
+    def llen(self, name: str) -> object: ...
 
-    def hgetall(self, name: str) -> Mapping[str, str]:
-        ...
+    def hgetall(self, name: str) -> Mapping[str, str]: ...
 
-    def hincrby(self, name: str, key: str, amount: int) -> object:
-        ...
+    def hincrby(self, name: str, key: str, amount: int) -> object: ...
 
-    def ping(self) -> object:
-        ...
+    def ping(self) -> object: ...
 
 
 class WorkerHeartbeatPayload(TypedDict):
@@ -113,12 +100,15 @@ def record_http_request(
     if path.endswith("/metrics"):
         return
 
-    HTTP_REQUESTS_TOTAL.labels(
+    _ensure_prometheus_metrics()
+    requests_total = cast(Any, HTTP_REQUESTS_TOTAL)
+    request_duration = cast(Any, HTTP_REQUEST_DURATION_SECONDS)
+    requests_total.labels(
         method=method.upper(),
         path=path,
         status_code=str(status_code),
     ).inc()
-    HTTP_REQUEST_DURATION_SECONDS.labels(
+    request_duration.labels(
         method=method.upper(),
         path=path,
     ).observe(duration_seconds)
@@ -243,9 +233,9 @@ def collect_monitoring_snapshot() -> MonitoringSnapshot:
         task_terminal_counts=terminal_counts,
         task_stage_failure_counts=stage_failure_counts,
         ai_outcome_counts=ai_outcomes,
-        task_failure_ratio=round(failed_terminal / total_terminal, 4)
-        if total_terminal
-        else 0.0,
+        task_failure_ratio=(
+            round(failed_terminal / total_terminal, 4) if total_terminal else 0.0
+        ),
         ai_failure_ratio=round(ai_failed / ai_total, 4) if ai_total else 0.0,
     )
 
@@ -316,17 +306,19 @@ def get_hash_counter_snapshot(
 
 
 def render_metrics_payload() -> bytes:
-    return generate_latest(METRICS_REGISTRY)
+    prometheus_runtime = _ensure_prometheus_metrics()
+    return prometheus_runtime["generate_latest"](METRICS_REGISTRY)
 
 
 class SpiderBilibiliRuntimeCollector:
-    def describe(self) -> list[Metric]:
+    def describe(self) -> list[Any]:
         return []
 
-    def collect(self) -> Iterator[Metric]:
+    def collect(self) -> Iterator[Any]:
+        prometheus_runtime = _ensure_prometheus_metrics()
         snapshot = collect_monitoring_snapshot()
 
-        component_health = GaugeMetricFamily(
+        component_health = prometheus_runtime["GaugeMetricFamily"](
             "spiderbilibili_component_health_status",
             "Health status for core components.",
             labels=["component"],
@@ -340,12 +332,12 @@ class SpiderBilibiliRuntimeCollector:
         )
         yield component_health
 
-        worker_active = GaugeMetricFamily(
+        worker_active = prometheus_runtime["GaugeMetricFamily"](
             "spiderbilibili_worker_active",
             "Worker heartbeat presence by worker process.",
             labels=["worker_name", "hostname", "pid", "state"],
         )
-        worker_age = GaugeMetricFamily(
+        worker_age = prometheus_runtime["GaugeMetricFamily"](
             "spiderbilibili_worker_heartbeat_age_seconds",
             "Seconds since the latest worker heartbeat.",
             labels=["worker_name", "hostname", "pid"],
@@ -365,7 +357,7 @@ class SpiderBilibiliRuntimeCollector:
         yield worker_active
         yield worker_age
 
-        queue_depth = GaugeMetricFamily(
+        queue_depth = prometheus_runtime["GaugeMetricFamily"](
             "spiderbilibili_celery_queue_depth",
             "Current Redis-backed Celery queue depth.",
             labels=["queue"],
@@ -376,7 +368,7 @@ class SpiderBilibiliRuntimeCollector:
         )
         yield queue_depth
 
-        task_records = GaugeMetricFamily(
+        task_records = prometheus_runtime["GaugeMetricFamily"](
             "spiderbilibili_task_records",
             "Current persisted task records grouped by status.",
             labels=["status"],
@@ -385,7 +377,7 @@ class SpiderBilibiliRuntimeCollector:
             task_records.add_metric([status], task_count)
         yield task_records
 
-        task_terminal_total = CounterMetricFamily(
+        task_terminal_total = prometheus_runtime["CounterMetricFamily"](
             "spiderbilibili_task_terminal_total",
             "Observed terminal task outcomes.",
             labels=["status"],
@@ -394,7 +386,7 @@ class SpiderBilibiliRuntimeCollector:
             task_terminal_total.add_metric([status], terminal_count)
         yield task_terminal_total
 
-        task_stage_failures = CounterMetricFamily(
+        task_stage_failures = prometheus_runtime["CounterMetricFamily"](
             "spiderbilibili_task_stage_failures_total",
             "Observed task stage failures.",
             labels=["stage"],
@@ -403,7 +395,7 @@ class SpiderBilibiliRuntimeCollector:
             task_stage_failures.add_metric([stage], stage_count)
         yield task_stage_failures
 
-        ai_outcomes = CounterMetricFamily(
+        ai_outcomes = prometheus_runtime["CounterMetricFamily"](
             "spiderbilibili_ai_video_analyses_total",
             "Observed AI analysis outcomes.",
             labels=["outcome"],
@@ -412,7 +404,7 @@ class SpiderBilibiliRuntimeCollector:
             ai_outcomes.add_metric([outcome], outcome_count)
         yield ai_outcomes
 
-        runtime_health = GaugeMetricFamily(
+        runtime_health = prometheus_runtime["GaugeMetricFamily"](
             "spiderbilibili_runtime_health",
             "Runtime health indicators for observability.",
             labels=["indicator"],
@@ -449,8 +441,7 @@ def _hash_key(metric_name: str, *, settings=None) -> str:
 def _worker_key(*, worker_name: str, hostname: str, pid: int) -> str:
     settings = get_settings()
     return (
-        f"{settings.monitoring_redis_prefix}:worker:"
-        f"{worker_name}:{hostname}:{pid}"
+        f"{settings.monitoring_redis_prefix}:worker:" f"{worker_name}:{hostname}:{pid}"
     )
 
 
@@ -509,22 +500,72 @@ def _coerce_int(value: object, *, default: int = 0) -> int:
     return default
 
 
-METRICS_REGISTRY = CollectorRegistry(auto_describe=False)
-GCCollector(registry=METRICS_REGISTRY)
-PlatformCollector(registry=METRICS_REGISTRY)
-ProcessCollector(registry=METRICS_REGISTRY)
+METRICS_REGISTRY: Any | None = None
+HTTP_REQUESTS_TOTAL: Any | None = None
+HTTP_REQUEST_DURATION_SECONDS: Any | None = None
 
-HTTP_REQUESTS_TOTAL = Counter(
-    "spiderbilibili_http_requests_total",
-    "Total API requests.",
-    labelnames=("method", "path", "status_code"),
-    registry=METRICS_REGISTRY,
-)
-HTTP_REQUEST_DURATION_SECONDS = Histogram(
-    "spiderbilibili_http_request_duration_seconds",
-    "API request latency in seconds.",
-    labelnames=("method", "path"),
-    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10),
-    registry=METRICS_REGISTRY,
-)
-METRICS_REGISTRY.register(cast(Any, SpiderBilibiliRuntimeCollector()))
+
+def _ensure_prometheus_metrics() -> dict[str, Any]:
+    global METRICS_REGISTRY, HTTP_REQUESTS_TOTAL, HTTP_REQUEST_DURATION_SECONDS
+
+    if (
+        METRICS_REGISTRY is not None
+        and HTTP_REQUESTS_TOTAL is not None
+        and HTTP_REQUEST_DURATION_SECONDS is not None
+    ):
+        return _load_prometheus_runtime()
+
+    prometheus_runtime = _load_prometheus_runtime()
+    METRICS_REGISTRY = prometheus_runtime["CollectorRegistry"](auto_describe=False)
+    prometheus_runtime["GCCollector"](registry=METRICS_REGISTRY)
+    prometheus_runtime["PlatformCollector"](registry=METRICS_REGISTRY)
+    prometheus_runtime["ProcessCollector"](registry=METRICS_REGISTRY)
+    HTTP_REQUESTS_TOTAL = prometheus_runtime["Counter"](
+        "spiderbilibili_http_requests_total",
+        "Total API requests.",
+        labelnames=("method", "path", "status_code"),
+        registry=METRICS_REGISTRY,
+    )
+    HTTP_REQUEST_DURATION_SECONDS = prometheus_runtime["Histogram"](
+        "spiderbilibili_http_request_duration_seconds",
+        "API request latency in seconds.",
+        labelnames=("method", "path"),
+        buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10),
+        registry=METRICS_REGISTRY,
+    )
+    METRICS_REGISTRY.register(cast(Any, SpiderBilibiliRuntimeCollector()))
+    return prometheus_runtime
+
+
+def _load_prometheus_runtime() -> dict[str, Any]:
+    prometheus_client = ensure_optional_dependency(
+        "prometheus-client",
+        "prometheus_client",
+    )
+    prometheus_core = ensure_optional_dependency(
+        "prometheus-client",
+        "prometheus_client.core",
+    )
+    gc_collector = ensure_optional_dependency(
+        "prometheus-client",
+        "prometheus_client.gc_collector",
+    )
+    platform_collector = ensure_optional_dependency(
+        "prometheus-client",
+        "prometheus_client.platform_collector",
+    )
+    process_collector = ensure_optional_dependency(
+        "prometheus-client",
+        "prometheus_client.process_collector",
+    )
+    return {
+        "CollectorRegistry": prometheus_client.CollectorRegistry,
+        "Counter": prometheus_client.Counter,
+        "Histogram": prometheus_client.Histogram,
+        "generate_latest": prometheus_client.generate_latest,
+        "CounterMetricFamily": prometheus_core.CounterMetricFamily,
+        "GaugeMetricFamily": prometheus_core.GaugeMetricFamily,
+        "GCCollector": gc_collector.GCCollector,
+        "PlatformCollector": platform_collector.PlatformCollector,
+        "ProcessCollector": process_collector.ProcessCollector,
+    }

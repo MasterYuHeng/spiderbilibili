@@ -116,12 +116,22 @@ export async function deleteAllTasks(): Promise<TaskBulkDeletePayload> {
   return requestData(() => apiClient.delete<ApiResponse<TaskBulkDeletePayload>>('/tasks'));
 }
 
-export async function listTasks(params: ListTaskParams): Promise<TaskListPayload> {
-  return requestData(() => apiClient.get<ApiResponse<TaskListPayload>>('/tasks', { params }));
+export async function listTasks(
+  params: ListTaskParams,
+  signal?: AbortSignal,
+): Promise<TaskListPayload> {
+  return requestData(() =>
+    apiClient.get<ApiResponse<TaskListPayload>>('/tasks', { params, signal }),
+  );
 }
 
-export async function listTrashTasks(params: ListTaskParams): Promise<TaskListPayload> {
-  return requestData(() => apiClient.get<ApiResponse<TaskListPayload>>('/tasks/trash', { params }));
+export async function listTrashTasks(
+  params: ListTaskParams,
+  signal?: AbortSignal,
+): Promise<TaskListPayload> {
+  return requestData(() =>
+    apiClient.get<ApiResponse<TaskListPayload>>('/tasks/trash', { params, signal }),
+  );
 }
 
 export async function restoreTask(taskId: string): Promise<TaskRestorePayload> {

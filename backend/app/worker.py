@@ -1,5 +1,7 @@
 import os
 import threading
+from importlib import import_module
+from typing import Any, cast
 
 from celery import Celery
 from celery.signals import heartbeat_sent, worker_ready
@@ -13,28 +15,63 @@ from app.models.base import utc_now
 from app.models.enums import LogLevel, TaskStage, TaskStatus
 from app.models.task import CrawlTask
 from app.services.alerting import AlertEvent, send_alert
-from app.services.crawl_pipeline_service import CrawlPipelineService
 from app.services.monitoring import (
     record_ai_batch_outcomes,
     record_task_stage_failure,
     record_task_terminal_status,
     record_worker_heartbeat,
 )
-from app.services.statistics_service import StatisticsService
 from app.services.task_concurrency_service import TaskExecutionGate
 from app.services.task_log_service import create_task_log
-from app.services.task_report_service import TaskReportService
 from app.services.task_service import (
     TASK_DISPATCH_NAME,
     TaskControlSignal,
     assert_task_execution_allowed,
 )
 from app.services.task_state_machine import transition_task_status
-from app.services.topic_cluster_service import TopicClusterService
-from app.services.video_ai_service import VideoAiService
 
 settings = get_settings()
 configure_logging()
+
+_WORKER_SERVICE_IMPORTS = {
+    "CrawlPipelineService": (
+        "app.services.crawl_pipeline_service",
+        "CrawlPipelineService",
+    ),
+    "StatisticsService": (
+        "app.services.statistics_service",
+        "StatisticsService",
+    ),
+    "TaskReportService": (
+        "app.services.task_report_service",
+        "TaskReportService",
+    ),
+    "TopicClusterService": (
+        "app.services.topic_cluster_service",
+        "TopicClusterService",
+    ),
+    "VideoAiService": (
+        "app.services.video_ai_service",
+        "VideoAiService",
+    ),
+}
+
+CrawlPipelineService = None
+StatisticsService = None
+TaskReportService = None
+TopicClusterService = None
+VideoAiService = None
+
+
+def _load_worker_service(service_name: str) -> type[Any]:
+    service = globals().get(service_name)
+    if service is not None:
+        return cast(type[Any], service)
+
+    module_name, attribute_name = _WORKER_SERVICE_IMPORTS[service_name]
+    service = getattr(import_module(module_name), attribute_name)
+    globals()[service_name] = service
+    return cast(type[Any], service)
 
 
 def resolve_celery_worker_pool(platform_name: str | None = None) -> str:
@@ -79,7 +116,10 @@ def record_task_runtime_heartbeat(
             dispatch_payload["celery_task_id"] = celery_task_id
 
         task.updated_at = heartbeat_at
-        task.extra_params = _merge_dispatch_metadata(task.extra_params, dispatch_payload)
+        task.extra_params = _merge_dispatch_metadata(
+            task.extra_params,
+            dispatch_payload,
+        )
         session.commit()
         return True
 
@@ -102,7 +142,9 @@ class TaskRuntimeHeartbeat:
         self.session_factory = session_factory
         self.task_id = task_id
         self.celery_task_id = celery_task_id
-        self.interval_seconds = interval_seconds or resolve_task_runtime_heartbeat_interval()
+        self.interval_seconds = (
+            interval_seconds or resolve_task_runtime_heartbeat_interval()
+        )
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -177,6 +219,11 @@ def run_crawl_task(
     task_id: str,
     dispatch_generation: int | None = None,
 ) -> dict[str, str | None]:
+    crawl_pipeline_service_cls = _load_worker_service("CrawlPipelineService")
+    statistics_service_cls = _load_worker_service("StatisticsService")
+    task_report_service_cls = _load_worker_service("TaskReportService")
+    topic_cluster_service_cls = _load_worker_service("TopicClusterService")
+    video_ai_service_cls = _load_worker_service("VideoAiService")
     session_factory = get_session_factory()
     celery_task_id = getattr(getattr(self, "request", None), "id", None)
     try:
@@ -239,7 +286,7 @@ def run_crawl_task(
                 celery_task_id=celery_task_id,
             ):
                 try:
-                    pipeline = CrawlPipelineService(session)
+                    pipeline = crawl_pipeline_service_cls(session)
                     try:
                         result = pipeline.run_task(
                             task,
@@ -252,7 +299,7 @@ def run_crawl_task(
                         task_id,
                         expected_dispatch_generation=dispatch_generation,
                     )
-                    ai_result = VideoAiService(session).analyze_task(
+                    ai_result = video_ai_service_cls(session).analyze_task(
                         task,
                         expected_dispatch_generation=dispatch_generation,
                     )
@@ -277,7 +324,7 @@ def run_crawl_task(
                         task_id,
                         expected_dispatch_generation=dispatch_generation,
                     )
-                    topic_result = TopicClusterService(session).cluster_task(
+                    topic_result = topic_cluster_service_cls(session).cluster_task(
                         task,
                         expected_dispatch_generation=dispatch_generation,
                     )
@@ -297,9 +344,9 @@ def run_crawl_task(
                         },
                     )
                     session.commit()
-                    statistics_result = StatisticsService(session).generate_and_persist(
-                        task
-                    )
+                    statistics_result = statistics_service_cls(
+                        session
+                    ).generate_and_persist(task)
                     final_status = _resolve_final_task_status(
                         crawl_success_count=result.success_count,
                         crawl_failure_count=result.failure_count,
@@ -329,7 +376,9 @@ def run_crawl_task(
                         },
                     )
                     session.commit()
-                    report_result = TaskReportService(session).generate_and_persist(
+                    report_result = task_report_service_cls(
+                        session
+                    ).generate_and_persist(
                         task,
                         status_override=final_status.value,
                     )
@@ -347,7 +396,9 @@ def run_crawl_task(
                                 TaskStage.REPORT.value,
                             ],
                             "report_section_count": len(report_result.sections),
-                            "report_generated_at": report_result.generated_at.isoformat(),
+                            "report_generated_at": (
+                                report_result.generated_at.isoformat()
+                            ),
                         },
                     )
                     session.commit()
@@ -400,7 +451,8 @@ def run_crawl_task(
                             severity="critical",
                             title="spiderbilibili task execution failed",
                             message=(
-                                f"Task {task.id} failed while executing the crawl pipeline."
+                                f"Task {task.id} failed while executing "
+                                "the crawl pipeline."
                             ),
                             details={
                                 "task_id": task.id,
@@ -489,7 +541,8 @@ def run_crawl_task(
                             ),
                             title="spiderbilibili task completed with issues",
                             message=(
-                                f"Task {task.id} finished with status {task.status.value}."
+                                f"Task {task.id} finished with status "
+                                f"{task.status.value}."
                             ),
                             details={
                                 "task_id": task.id,
@@ -514,13 +567,14 @@ def run_crawl_task(
 
 @celery_app.task(name="app.worker.run_ai_analysis_batch")
 def run_ai_analysis_batch(task_id: str) -> dict[str, int | str]:
+    video_ai_service_cls = _load_worker_service("VideoAiService")
     session_factory = get_session_factory()
     with session_factory() as session:
         task = session.scalar(select(CrawlTask).where(CrawlTask.id == task_id))
         if task is None:
             raise ValueError(f"Task {task_id} does not exist.")
 
-        result = VideoAiService(session).analyze_task(task)
+        result = video_ai_service_cls(session).analyze_task(task)
         return {
             "task_id": task_id,
             "success_count": result.success_count,
@@ -534,14 +588,16 @@ def run_ai_analysis_batch(task_id: str) -> dict[str, int | str]:
 
 @celery_app.task(name="app.worker.run_topic_analysis_batch")
 def run_topic_analysis_batch(task_id: str) -> dict[str, int | str]:
+    statistics_service_cls = _load_worker_service("StatisticsService")
+    topic_cluster_service_cls = _load_worker_service("TopicClusterService")
     session_factory = get_session_factory()
     with session_factory() as session:
         task = session.scalar(select(CrawlTask).where(CrawlTask.id == task_id))
         if task is None:
             raise ValueError(f"Task {task_id} does not exist.")
 
-        cluster_result = TopicClusterService(session).cluster_task(task)
-        statistics_result = StatisticsService(session).generate_and_persist(task)
+        cluster_result = topic_cluster_service_cls(session).cluster_task(task)
+        statistics_result = statistics_service_cls(session).generate_and_persist(task)
         return {
             "task_id": task_id,
             "cluster_count": cluster_result.cluster_count,

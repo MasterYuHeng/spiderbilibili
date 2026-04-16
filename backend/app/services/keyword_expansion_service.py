@@ -9,7 +9,11 @@ from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.models.base import utc_now
 from app.schemas.task import ALLOWED_KEYWORD_SYNONYM_COUNTS
-from app.services.ai_client import AiPromptBundle, AiJsonResponse, OpenAICompatibleAiClient
+from app.services.ai_client import (
+    AiJsonResponse,
+    AiPromptBundle,
+    OpenAICompatibleAiClient,
+)
 
 KEYWORD_EXPANSION_SUCCESS = "success"
 KEYWORD_EXPANSION_FALLBACK = "fallback"
@@ -111,7 +115,10 @@ class KeywordExpansionService:
     ) -> dict[str, Any]:
         generated_at = self._build_timestamp()
 
-        if not hasattr(self.ai_client, "is_available") or not self.ai_client.is_available():
+        if (
+            not hasattr(self.ai_client, "is_available")
+            or not self.ai_client.is_available()
+        ):
             return self._build_payload(
                 source_keyword=source_keyword,
                 enabled=True,
@@ -187,7 +194,8 @@ class KeywordExpansionService:
                 "你是一个负责 B 站搜索召回增强的中文关键词扩展助手。"
                 "请只输出 JSON 对象，不要输出额外解释。"
                 'JSON 结构必须为 {"synonyms":["词1","词2"]}。'
-                "synonyms 只返回与原关键词在 B 站语境下常见的同义词、简称、代称或流行说法。"
+                "synonyms 只返回与原关键词在 B 站语境下常见的"
+                "同义词、简称、代称或流行说法。"
                 "不要返回原关键词本身，不要返回解释句，不要返回无关长句。"
                 "优先保留真正能提升视频搜索召回的表达。"
             ),
@@ -304,8 +312,10 @@ class KeywordExpansionService:
                 KEYWORD_EXPANSION_PENDING if enabled else KEYWORD_EXPANSION_SKIPPED
             )
 
-        normalized_generated_synonyms = (
-            generated_synonyms if normalized_status == KEYWORD_EXPANSION_SUCCESS else []
+        normalized_generated_synonyms: list[str] = (
+            list(generated_synonyms or [])
+            if normalized_status == KEYWORD_EXPANSION_SUCCESS
+            else []
         )
         expanded_keywords = [normalized_source_keyword]
         expanded_keywords.extend(

@@ -1,12 +1,57 @@
 # Docker 部署指南
 
-> 文档角色：本文件只负责 Docker 使用与部署步骤。项目级技术栈、环境基线和文档治理口径以 `docs/02-tech-stack-and-env.md` 为准。
+> 文档角色：本文件只负责 Docker 相关链路，包括基础设施、轻量运行、完整开发和完整部署。
 
-SpiderBilibili 提供两种 Docker 使用方式：
-- 方式 A：只用 Docker 启动 PostgreSQL 和 Redis，前后端继续本地开发
-- 方式 B：使用 Docker 启动整套服务，适合服务器部署或完整容器化运行
+## 1. 先选 Docker 模式
 
-## 1. 前置要求
+SpiderBilibili 现在有四种 Docker 用法：
+
+### 模式 A：只启动基础设施
+
+适合：
+- 本地开发时只把 PostgreSQL 和 Redis 放进容器
+
+配置文件：
+- `docker-compose.yml`
+
+### 模式 B：轻量整套 Docker 运行
+
+适合：
+- 用户不想在宿主机安装 Python / Node / Playwright
+- 只想直接把完整应用跑起来
+
+入口：
+- `launch-docker.bat`
+- `close-docker.bat`
+
+配置文件：
+- `docker-compose.app.yml`
+
+### 模式 C：完整 Docker 开发
+
+适合：
+- 需要看源码
+- 需要完整重依赖
+- 希望前后端开发环境都在容器里
+
+入口：
+- `launch-docker-dev.bat`
+- `close-docker-dev.bat`
+
+配置文件：
+- `docker-compose.dev-full.yml`
+
+### 模式 D：完整 Docker 部署
+
+适合：
+- 服务器部署
+- 生产或准生产验收
+- 完整容器化运行
+
+配置文件：
+- `docker-compose.prod.yml`
+
+## 2. 前置要求
 
 - Docker Engine 24+ 或 Docker Desktop
 - Docker Compose v2
@@ -18,18 +63,13 @@ docker --version
 docker compose version
 ```
 
-## 2. 方式 A：只启动基础设施
-
-适合本地开发时只把数据库和 Redis 放进容器。
+## 3. 模式 A：只启动基础设施
 
 启动：
 
 ```powershell
 docker compose up -d
 ```
-
-配置文件：
-- `docker-compose.yml`
 
 会启动：
 - PostgreSQL
@@ -61,15 +101,118 @@ docker compose down
 - 这种模式下，前端、后端、Worker 仍按本地方式启动
 - 对应教程见 `docs/LOCAL_SETUP.md`
 
-## 3. 方式 B：整套 Docker 部署
+## 4. 模式 B：轻量整套 Docker 运行
+
+### 4.1 启动器方式
+
+启动：
+
+```powershell
+.\launch-docker.bat
+```
+
+关闭：
+
+```powershell
+.\close-docker.bat
+```
+
+### 4.2 手动方式
+
+先复制模板：
+
+```powershell
+Copy-Item docker/.env.app.local.example docker/.env.app.local
+```
+
+启动：
+
+```powershell
+docker compose --env-file docker/.env.app.local -f docker-compose.app.yml up -d --build
+```
+
+停止：
+
+```powershell
+docker compose --env-file docker/.env.app.local -f docker-compose.app.yml down
+```
+
+### 4.3 会启动什么
+
+- `postgres`
+- `redis`
+- `backend`
+- `worker`
+- `web`
+
+说明：
+- 不包含 Prometheus、Grafana、Alertmanager
+- 适合“用户开箱即用运行”
+
+### 4.4 默认入口
+
+- Web：`http://127.0.0.1:8080`
+
+## 5. 模式 C：完整 Docker 开发
+
+### 5.1 启动器方式
+
+启动：
+
+```powershell
+.\launch-docker-dev.bat
+```
+
+关闭：
+
+```powershell
+.\close-docker-dev.bat
+```
+
+### 5.2 手动方式
+
+先复制模板：
+
+```powershell
+Copy-Item docker/.env.dev-full.example docker/.env.dev-full
+```
+
+启动：
+
+```powershell
+docker compose --env-file docker/.env.dev-full -f docker-compose.dev-full.yml up -d --build
+```
+
+停止：
+
+```powershell
+docker compose --env-file docker/.env.dev-full -f docker-compose.dev-full.yml down
+```
+
+### 5.3 会启动什么
+
+- `postgres`
+- `redis`
+- `backend`
+- `worker`
+- `frontend`
+
+说明：
+- 这是完整开发链路，不是轻量运行链路
+- 会在容器里装齐完整 Python 依赖和前端依赖
+- `backend` 和 `frontend` 都挂载源码目录，适合看代码和调试
+
+### 5.4 默认入口
+
+- 前端：`http://127.0.0.1:5174`
+- API：`http://127.0.0.1:8014/api`
+
+## 6. 模式 D：完整 Docker 部署
 
 适合以下场景：
 - 服务器部署
 - 完整容器化验收
-- 不希望宿主机直接安装 Python / Node 运行时
-
-配置文件：
-- `docker-compose.prod.yml`
+- 需要监控组件
 
 整套部署默认包含：
 - `postgres`
@@ -83,15 +226,15 @@ docker compose down
 - `alertmanager`
 - `grafana`
 
-## 4. 部署前准备
+## 7. 完整 Docker 部署前准备
 
-### 4.1 复制生产环境模板
+### 7.1 复制生产环境模板
 
 ```powershell
 Copy-Item docker/.env.production.example docker/.env.production
 ```
 
-### 4.2 最少要改的配置
+### 7.2 最少要改的配置
 
 部署前至少确认这些值：
 - `POSTGRES_PASSWORD`
@@ -107,7 +250,7 @@ Copy-Item docker/.env.production.example docker/.env.production
 - `GRAFANA_ROOT_URL`
 - 反向代理或公网域名配置是否一致
 
-## 5. 启动整套服务
+## 8. 启动完整 Docker 部署
 
 ```powershell
 docker compose --env-file docker/.env.production -f docker-compose.prod.yml up -d --build
@@ -117,17 +260,26 @@ docker compose --env-file docker/.env.production -f docker-compose.prod.yml up -
 - `backend` 启动前会自动执行 `alembic upgrade head`
 - `frontend` 会在构建阶段编译静态资源，并由 `nginx` 对外提供
 
-## 6. 查看部署状态
+## 9. 查看部署状态
 
-查看容器：
+### 轻量运行
+
+```powershell
+docker compose --env-file docker/.env.app.local -f docker-compose.app.yml ps
+docker compose --env-file docker/.env.app.local -f docker-compose.app.yml logs -f
+```
+
+### 完整 Docker 开发
+
+```powershell
+docker compose --env-file docker/.env.dev-full -f docker-compose.dev-full.yml ps
+docker compose --env-file docker/.env.dev-full -f docker-compose.dev-full.yml logs -f
+```
+
+### 完整 Docker 部署
 
 ```powershell
 docker compose --env-file docker/.env.production -f docker-compose.prod.yml ps
-```
-
-查看日志：
-
-```powershell
 docker compose --env-file docker/.env.production -f docker-compose.prod.yml logs -f
 ```
 
@@ -143,9 +295,19 @@ docker compose --env-file docker/.env.production -f docker-compose.prod.yml logs
 docker compose --env-file docker/.env.production -f docker-compose.prod.yml logs -f worker
 ```
 
-## 7. 默认访问入口
+## 10. 默认访问入口
 
-整套部署成功后，通常可访问：
+### 轻量整套 Docker 运行
+
+- Web：`http://127.0.0.1:8080`
+
+### 完整 Docker 开发
+
+- 前端：`http://127.0.0.1:5174`
+- API：`http://127.0.0.1:8014/api`
+
+### 完整 Docker 部署
+
 - Web：`http://<your-host>:<WEB_PORT>`
 - Grafana：`http://<your-host>:<GRAFANA_PORT>`
 - Prometheus：`http://<your-host>:<PROMETHEUS_PORT>`
@@ -154,9 +316,26 @@ docker compose --env-file docker/.env.production -f docker-compose.prod.yml logs
 如果 `WEB_PORT=80`，则 Web 默认入口通常是：
 - `http://<your-host>`
 
-## 8. 数据持久化
+## 11. 数据持久化
 
-`docker-compose.prod.yml` 已声明以下卷：
+### 轻量整套 Docker 运行
+
+`docker-compose.app.yml` 使用：
+- `app_postgres_data`
+- `app_redis_data`
+- `app_backend_logs`
+- `app_backend_raw_data`
+
+### 完整 Docker 开发
+
+`docker-compose.dev-full.yml` 使用：
+- `dev_postgres_data`
+- `dev_redis_data`
+- `dev_frontend_node_modules`
+
+### 完整 Docker 部署
+
+`docker-compose.prod.yml` 使用：
 - `postgres_data`
 - `redis_data`
 - `backend_logs`
@@ -166,33 +345,48 @@ docker compose --env-file docker/.env.production -f docker-compose.prod.yml logs
 - `grafana_data`
 
 说明：
-- 这些卷用于保存数据库、Redis、日志、原始抓取数据和监控数据
 - 删除容器不会自动删除这些卷
+- 如果要连卷一起删，请显式使用 `down -v`
 
-如需连同卷一起清理：
+## 12. 配置校验建议
+
+正式启动前建议先检查 Compose 是否能正确展开。
+
+轻量整套 Docker 运行：
 
 ```powershell
-docker compose --env-file docker/.env.production -f docker-compose.prod.yml down -v
+docker compose --env-file docker/.env.app.local -f docker-compose.app.yml config
 ```
 
-请谨慎执行，这会删除持久化数据。
+完整 Docker 开发：
 
-## 9. 配置校验建议
+```powershell
+docker compose --env-file docker/.env.dev-full -f docker-compose.dev-full.yml config
+```
 
-在正式启动前，建议先检查 Compose 是否能正确展开：
+完整 Docker 部署：
 
 ```powershell
 docker compose --env-file docker/.env.production -f docker-compose.prod.yml config
 ```
 
-如果这一步失败，优先检查：
-- `.env.production` 是否存在
-- 环境变量格式是否正确
-- 端口是否写成了非法值
+## 13. 最小验收清单
 
-## 10. 发布前最小验收清单
+### 轻量整套 Docker 运行
 
-整套 Docker 部署后，建议至少确认：
+1. Web 页面可访问
+2. `backend` 健康检查通过
+3. Worker 正常启动
+4. 可以创建任务
+
+### 完整 Docker 开发
+
+1. `http://127.0.0.1:5174` 可访问
+2. `http://127.0.0.1:8014/api/health` 返回 `200`
+3. Worker 正常启动
+4. 可以进入任务创建页
+
+### 完整 Docker 部署
 
 1. `docker compose ... ps` 中核心服务都在运行
 2. Web 页面可访问
@@ -201,19 +395,21 @@ docker compose --env-file docker/.env.production -f docker-compose.prod.yml conf
 5. 可以创建任务
 6. 至少完成一次任务主链路验证
 
-## 11. 常见问题
+## 14. 常见问题
 
 ### 启动失败，提示端口占用
 
 优先检查这些端口是否已被宿主机占用：
-- `80`
+- `80` 或 `8080`
+- `5174`
+- `8014`
+- `5434`
+- `6381`
 - `3000`
-- `5434` 或数据库相关端口
-- `6381` 或 Redis 相关端口
 - `9090`
 - `9093`
 
-如果冲突，修改 `docker/.env.production` 中对应端口。
+如果冲突，修改对应 `docker/.env.*` 文件中的端口。
 
 ### 前端能打开，但接口失败
 
@@ -238,9 +434,10 @@ docker compose --env-file docker/.env.production -f docker-compose.prod.yml conf
 - `GRAFANA_PORT`
 - Grafana 管理员密码是否已设置
 
-## 12. 建议
+## 15. 建议
 
-- 本地开发优先使用 `docker-compose.yml`
-- 完整部署优先使用 `docker-compose.prod.yml`
-- 不要把真实 `docker/.env.production` 提交到公开仓库
-- 首次对外发布前，至少做一次真实环境启动验收
+- 只想运行，优先使用 `docker-compose.app.yml` 或 `launch-docker.bat`
+- 需要在容器里开发，优先使用 `docker-compose.dev-full.yml` 或 `launch-docker-dev.bat`
+- 只想给本地开发提供数据库和 Redis，就继续使用 `docker-compose.yml`
+- 生产部署使用 `docker-compose.prod.yml`
+- 不要把真实 `docker/.env.*` 提交到公开仓库

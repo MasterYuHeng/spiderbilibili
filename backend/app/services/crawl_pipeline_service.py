@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.crawler.browser_client import BilibiliBrowserClient
 from app.crawler.client import BilibiliHttpClient
@@ -21,12 +22,11 @@ from app.crawler.subtitle_spider import BilibiliSubtitleSpider
 from app.models.base import utc_now
 from app.models.enums import LogLevel, TaskStage
 from app.models.task import CrawlTask
-from app.core.config import get_settings
+from app.services.keyword_expansion_service import KeywordExpansionService
 from app.services.system_config_service import (
     build_bilibili_runtime_settings,
     get_system_config_value,
 )
-from app.services.keyword_expansion_service import KeywordExpansionService
 from app.services.task_log_service import create_task_log
 from app.services.task_service import assert_task_execution_allowed
 from app.services.video_score_service import VideoScoreService
@@ -142,7 +142,9 @@ class CrawlPipelineService:
         crawl_mode = str(task_options.get("crawl_mode") or "keyword")
         search_scope = str(task_options.get("search_scope") or "site")
         partition_tid_raw = task_options.get("partition_tid")
-        partition_tid = int(partition_tid_raw) if partition_tid_raw is not None else None
+        partition_tid = (
+            int(partition_tid_raw) if partition_tid_raw is not None else None
+        )
         partition_name = (
             str(task_options.get("partition_name"))
             if task_options.get("partition_name")
@@ -186,9 +188,11 @@ class CrawlPipelineService:
                 "requested_video_limit": task.requested_video_limit,
                 "search_keyword_count": len(search_keywords_used),
                 "search_keywords_used": search_keywords_used,
-                "keyword_expansion_status": keyword_expansion.get("status")
-                if isinstance(keyword_expansion, dict)
-                else None,
+                "keyword_expansion_status": (
+                    keyword_expansion.get("status")
+                    if isinstance(keyword_expansion, dict)
+                    else None
+                ),
             },
         )
         self.session.commit()
@@ -237,12 +241,15 @@ class CrawlPipelineService:
             payload={
                 "raw_candidate_count": len(candidates),
                 "candidate_count": len(filtered_candidates),
-                "filtered_out_count": len(deduped_candidates) - len(filtered_candidates),
+                "filtered_out_count": len(deduped_candidates)
+                - len(filtered_candidates),
                 "selected_count": len(selected_candidates),
                 "search_keyword_count": len(search_keywords_used),
-                "expanded_keyword_count": max(len(search_keywords_used) - 1, 0)
-                if crawl_mode == "keyword"
-                else 0,
+                "expanded_keyword_count": (
+                    max(len(search_keywords_used) - 1, 0)
+                    if crawl_mode == "keyword"
+                    else 0
+                ),
                 "search_keywords_used": search_keywords_used,
                 "crawl_mode": crawl_mode,
                 "search_scope": search_scope,
@@ -486,11 +493,14 @@ class CrawlPipelineService:
                     "raw_candidate_count": len(candidates),
                     "candidate_count": len(filtered_candidates),
                     "selected_count": len(selected_candidates),
-                    "filtered_out_count": len(deduped_candidates) - len(filtered_candidates),
+                    "filtered_out_count": len(deduped_candidates)
+                    - len(filtered_candidates),
                     "search_keyword_count": len(search_keywords_used),
-                    "expanded_keyword_count": max(len(search_keywords_used) - 1, 0)
-                    if crawl_mode == "keyword"
-                    else 0,
+                    "expanded_keyword_count": (
+                        max(len(search_keywords_used) - 1, 0)
+                        if crawl_mode == "keyword"
+                        else 0
+                    ),
                     "search_keywords_used": search_keywords_used,
                     "video_concurrency": video_concurrency,
                     "success_count": len(scored_videos),
@@ -548,9 +558,7 @@ class CrawlPipelineService:
             subtitle_count=subtitle_count,
             top_videos=top_videos,
             raw_archive_dir=(
-                str(raw_archive.root_dir)
-                if raw_archive.root_dir is not None
-                else None
+                str(raw_archive.root_dir) if raw_archive.root_dir is not None else None
             ),
         )
 
@@ -583,9 +591,11 @@ class CrawlPipelineService:
             task_options.get("keyword_synonym_count")
         )
         existing_payload = self._normalize_keyword_expansion_payload(
-            task.extra_params.get("keyword_expansion")
-            if isinstance(task.extra_params, dict)
-            else None,
+            (
+                task.extra_params.get("keyword_expansion")
+                if isinstance(task.extra_params, dict)
+                else None
+            ),
             source_keyword=source_keyword,
             enabled=enabled,
             requested_synonym_count=requested_synonym_count,
@@ -662,9 +672,11 @@ class CrawlPipelineService:
             self.session.commit()
 
         search_keywords_used = self._normalize_search_keywords(
-            keyword_expansion.get("expanded_keywords")
-            if isinstance(keyword_expansion, dict)
-            else None,
+            (
+                keyword_expansion.get("expanded_keywords")
+                if isinstance(keyword_expansion, dict)
+                else None
+            ),
             source_keyword=source_keyword,
         )
         if not search_keywords_used:
@@ -758,9 +770,11 @@ class CrawlPipelineService:
             "title": detail.title,
             "author_name": detail.author_name,
             "url": detail.url,
-            "published_at": detail.published_at.isoformat()
-            if detail.published_at is not None
-            else None,
+            "published_at": (
+                detail.published_at.isoformat()
+                if detail.published_at is not None
+                else None
+            ),
             "duration_seconds": detail.duration_seconds,
             "description": detail.description[:500],
             "tags": detail.tags[:10],
@@ -773,14 +787,16 @@ class CrawlPipelineService:
                 "reply_count": detail.metrics.reply_count,
                 "danmaku_count": detail.metrics.danmaku_count,
             },
-            "subtitle": {
-                "language_code": subtitle.language_code,
-                "language_name": subtitle.language_name,
-                "segment_count": len(subtitle.segments),
-                "combined_text_preview": subtitle.combined_text[:500],
-            }
-            if subtitle is not None
-            else None,
+            "subtitle": (
+                {
+                    "language_code": subtitle.language_code,
+                    "language_name": subtitle.language_name,
+                    "segment_count": len(subtitle.segments),
+                    "combined_text_preview": subtitle.combined_text[:500],
+                }
+                if subtitle is not None
+                else None
+            ),
             "search_rank": candidate.search_rank,
             "matched_keywords": list(candidate.matched_keywords or []),
             "primary_matched_keyword": candidate.primary_matched_keyword,
@@ -853,7 +869,11 @@ class CrawlPipelineService:
         task_options = extra_params.get("task_options")
         if not isinstance(task_options, dict):
             return task.keyword
-        return "" if str(task_options.get("crawl_mode") or "keyword") == "hot" else task.keyword
+        return (
+            ""
+            if str(task_options.get("crawl_mode") or "keyword") == "hot"
+            else task.keyword
+        )
 
     @staticmethod
     def _merge_task_crawl_payload(
@@ -928,10 +948,18 @@ class CrawlPipelineService:
         requested_synonym_count: int | None,
     ) -> dict[str, Any]:
         normalized_source_keyword = str(source_keyword or "").strip()
-        normalized_status = str(
-            payload.get("status") if isinstance(payload, dict) else ""
-        ).strip().lower()
-        if normalized_status not in {"skipped", "pending", "success", "fallback", "failed"}:
+        normalized_status = (
+            str(payload.get("status") if isinstance(payload, dict) else "")
+            .strip()
+            .lower()
+        )
+        if normalized_status not in {
+            "skipped",
+            "pending",
+            "success",
+            "fallback",
+            "failed",
+        }:
             normalized_status = "pending" if enabled else "skipped"
 
         if not enabled:
@@ -939,7 +967,11 @@ class CrawlPipelineService:
 
         generated_synonyms = (
             CrawlPipelineService._normalize_generated_synonyms(
-                payload.get("generated_synonyms") if isinstance(payload, dict) else None,
+                (
+                    payload.get("generated_synonyms")
+                    if isinstance(payload, dict)
+                    else None
+                ),
                 source_keyword=normalized_source_keyword,
             )
             if normalized_status == "success"

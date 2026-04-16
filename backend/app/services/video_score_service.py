@@ -32,8 +32,7 @@ class VideoScoreService:
             f"{bundle.candidate.description}\n{bundle.detail.description}".casefold()
         )
         tag_texts = [
-            tag.casefold()
-            for tag in (bundle.detail.tags or bundle.candidate.tag_names)
+            tag.casefold() for tag in (bundle.detail.tags or bundle.candidate.tag_names)
         ]
 
         keyword_hit_title = (

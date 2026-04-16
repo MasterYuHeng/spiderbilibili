@@ -230,9 +230,10 @@ class VideoStorageService:
             matched_keywords.append(normalized_item)
             seen.add(normalized_item)
 
-        primary_matched_keyword = str(
-            getattr(candidate, "primary_matched_keyword", None) or ""
-        ).strip() or None
+        primary_matched_keyword = (
+            str(getattr(candidate, "primary_matched_keyword", None) or "").strip()
+            or None
+        )
         if primary_matched_keyword and primary_matched_keyword not in seen:
             matched_keywords.append(primary_matched_keyword)
             seen.add(primary_matched_keyword)

@@ -13,11 +13,11 @@ from app.services.system_config_service import (
     get_ai_batch_defaults,
     get_ai_quality_control_defaults,
     get_ai_runtime_overrides,
+    get_ai_summary_defaults,
     get_statistics_defaults,
     get_system_config_value,
     get_task_creation_defaults,
     get_topic_clustering_defaults,
-    get_ai_summary_defaults,
     resolve_ai_client_settings,
     resolve_bilibili_auth_settings,
     update_bilibili_runtime_auth_config,
@@ -255,11 +255,16 @@ def test_resolve_ai_client_settings_prefers_runtime_deepseek_key() -> None:
     assert resolved["key_source"] == "runtime"
 
 
-def test_update_bilibili_runtime_config_parses_cookie_and_stores_account_profile() -> None:
+def test_update_bilibili_runtime_config_parses_cookie_and_stores_account_profile() -> (
+    None
+):
     with build_session() as session:
         update_bilibili_runtime_auth_config(
             session,
-            cookie="SESSDATA=runtime-sess; bili_jct=runtime-jct; DedeUserID=2233; buvid3=aaa",
+            cookie=(
+                "SESSDATA=runtime-sess; bili_jct=runtime-jct; "
+                "DedeUserID=2233; buvid3=aaa"
+            ),
             account_profile={"is_login": True, "mid": "2233", "username": "测试账号"},
             import_source={"label": "Microsoft Edge / Default"},
             validation_message=None,
@@ -268,7 +273,10 @@ def test_update_bilibili_runtime_config_parses_cookie_and_stores_account_profile
         resolved = resolve_bilibili_auth_settings(session, build_settings())
 
     assert resolved["key_source"] == "runtime"
-    assert resolved["cookie"] == "SESSDATA=runtime-sess; bili_jct=runtime-jct; DedeUserID=2233; buvid3=aaa"
+    assert (
+        resolved["cookie"]
+        == "SESSDATA=runtime-sess; bili_jct=runtime-jct; DedeUserID=2233; buvid3=aaa"
+    )
     assert resolved["bilibili_sessdata"] == "runtime-sess"
     assert resolved["bilibili_bili_jct"] == "runtime-jct"
     assert resolved["bilibili_dedeuserid"] == "2233"
@@ -291,7 +299,10 @@ def test_build_bilibili_runtime_settings_overrides_environment_values() -> None:
         session.commit()
         runtime_settings = build_bilibili_runtime_settings(session, build_settings())
 
-    assert runtime_settings.bilibili_cookie == "SESSDATA=runtime-sess; bili_jct=runtime-jct; DedeUserID=2233"
+    assert (
+        runtime_settings.bilibili_cookie
+        == "SESSDATA=runtime-sess; bili_jct=runtime-jct; DedeUserID=2233"
+    )
     assert runtime_settings.bilibili_sessdata == "runtime-sess"
     assert runtime_settings.bilibili_bili_jct == "runtime-jct"
     assert runtime_settings.bilibili_dedeuserid == "2233"

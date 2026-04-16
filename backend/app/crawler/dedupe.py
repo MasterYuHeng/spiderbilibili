@@ -82,7 +82,10 @@ def _resolve_primary_matched_keyword(
     merged_matched_keywords: list[str],
 ) -> str | None:
     normalized_source_keyword = str(source_keyword or "").strip()
-    if normalized_source_keyword and normalized_source_keyword in merged_matched_keywords:
+    if (
+        normalized_source_keyword
+        and normalized_source_keyword in merged_matched_keywords
+    ):
         return normalized_source_keyword
 
     left_primary = left.primary_matched_keyword or left.keyword or None

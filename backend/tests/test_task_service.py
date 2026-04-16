@@ -7,17 +7,17 @@ from sqlalchemy.orm import sessionmaker
 from app.db.base import Base
 from app.models.enums import TaskStage, TaskStatus
 from app.models.task import CrawlTask
+from app.services.task_log_service import create_task_log
 from app.services.task_service import (
     TaskDispatchResult,
     _build_celery_runtime_state_resolver,
     calculate_task_progress,
     delete_crawl_task,
     get_task_progress,
+    restore_crawl_task,
     resume_crawl_task,
     retry_crawl_task,
-    restore_crawl_task,
 )
-from app.services.task_log_service import create_task_log
 from app.worker import record_task_runtime_heartbeat
 
 
@@ -115,7 +115,9 @@ def test_retry_crawl_task_creates_a_new_queued_task(monkeypatch) -> None:
     assert detail.status == "queued"
     assert detail.extra_params["retry_context"]["retry_of_task_id"] == source_task_id
     assert detail.extra_params["task_options"]["published_within_days"] == 7
-    assert detail.extra_params["task_options"]["enable_keyword_synonym_expansion"] is True
+    assert (
+        detail.extra_params["task_options"]["enable_keyword_synonym_expansion"] is True
+    )
     assert detail.extra_params["task_options"]["keyword_synonym_count"] == 3
     assert detail.extra_params["keyword_expansion"]["status"] == "success"
     assert detail.extra_params["keyword_expansion"]["generated_synonyms"] == [
@@ -374,7 +376,7 @@ def test_terminal_success_progress_waits_for_report_snapshot() -> None:
     assert calculate_task_progress(task) == 98
 
 
-def test_get_task_progress_returns_report_stage_until_terminal_artifacts_are_complete() -> None:
+def test_get_task_progress_stays_on_report_stage_until_artifacts_complete() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
@@ -454,7 +456,7 @@ def test_get_task_progress_keeps_running_task_active_after_worker_heartbeat(
     assert progress.status == TaskStatus.RUNNING.value
 
 
-def test_terminal_success_reaches_100_only_when_analysis_and_report_snapshots_exist() -> None:
+def test_terminal_success_reaches_100_only_with_analysis_and_report_snapshots() -> None:
     task = CrawlTask(
         keyword="artifact-check",
         status=TaskStatus.SUCCESS,

@@ -139,7 +139,9 @@ def test_openai_compatible_client_falls_back_to_secondary_model() -> None:
 
 
 def test_openai_compatible_client_generate_json_returns_object_payload() -> None:
-    response = build_response('{"outputs":[{"key":"melon_reader","content":"热点结果"}]}')
+    response = build_response(
+        '{"outputs":[{"key":"melon_reader","content":"热点结果"}]}'
+    )
     fake_client = FakeOpenAIClient(response)
     client = OpenAICompatibleAiClient(
         provider_name="openai",

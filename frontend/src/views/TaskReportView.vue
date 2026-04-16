@@ -272,13 +272,12 @@
 
 <script setup lang="ts">
 import { ElMessage } from 'element-plus'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
 import { getErrorMessage, isRequestCanceled } from '@/api/client'
 import { getTaskProgress, getTaskReport } from '@/api/tasks'
 import type { TaskProgressPayload, TaskReportPayload, TaskStatus } from '@/api/types'
-import AuthorComparisonChart from '@/components/charts/AuthorComparisonChart.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import InsightText from '@/components/common/InsightText.vue'
 import StatCard from '@/components/common/StatCard.vue'
@@ -288,6 +287,10 @@ import { useTaskWorkspaceStore } from '@/stores/taskWorkspace'
 import { formatInsightHtml } from '@/utils/aiText'
 import { formatCompactNumber, formatNumber, formatPercent, formatScore } from '@/utils/format'
 import { isActiveTaskStatus } from '@/utils/taskStatus'
+
+const AuthorComparisonChart = defineAsyncComponent(
+  () => import('@/components/charts/AuthorComparisonChart.vue'),
+)
 
 const route = useRoute()
 const workspaceStore = useTaskWorkspaceStore()
@@ -442,6 +445,7 @@ function formatSelectionReason(reason: string) {
 }
 
 watch(taskId, () => {
+  clearTimer()
   abortPendingRequests()
   hydrateCachedReport()
   taskProgress.value = null

@@ -225,16 +225,12 @@ class TaskAcceptanceService:
                 title="Topic readability",
                 status=(
                     PASS
-                    if topics
-                    and topic_name_ratio >= 1.0
-                    and topic_desc_ratio >= 0.5
+                    if topics and topic_name_ratio >= 1.0 and topic_desc_ratio >= 0.5
                     else WARN
                 ),
                 message=(
                     "Topic names are present and most topics have descriptions."
-                    if topics
-                    and topic_name_ratio >= 1.0
-                    and topic_desc_ratio >= 0.5
+                    if topics and topic_name_ratio >= 1.0 and topic_desc_ratio >= 0.5
                     else (
                         "Topics are not available yet."
                         if not topics
@@ -261,9 +257,7 @@ class TaskAcceptanceService:
                         round(mean(heat_scores), 4) if heat_scores else None
                     ),
                     "mean_composite_score": (
-                        round(mean(composite_scores), 4)
-                        if composite_scores
-                        else None
+                        round(mean(composite_scores), 4) if composite_scores else None
                     ),
                 },
             ),
@@ -325,12 +319,10 @@ class TaskAcceptanceService:
 
     def _build_compliance_checks(self, task: CrawlTask) -> list[AcceptanceCheck]:
         proxy_strategy_is_valid = (
-            (not task.enable_proxy and task.source_ip_strategy == "local_sleep")
-            or (
-                task.enable_proxy
-                and task.source_ip_strategy
-                in {"proxy_pool", "custom_proxy", "local_sleep"}
-            )
+            not task.enable_proxy and task.source_ip_strategy == "local_sleep"
+        ) or (
+            task.enable_proxy
+            and task.source_ip_strategy in {"proxy_pool", "custom_proxy", "local_sleep"}
         )
 
         return [
@@ -338,9 +330,7 @@ class TaskAcceptanceService:
                 code="crawler-rate-limit-configured",
                 title="Crawler rate limit is configured",
                 status=(
-                    PASS
-                    if self.settings.crawler_rate_limit_per_minute > 0
-                    else FAIL
+                    PASS if self.settings.crawler_rate_limit_per_minute > 0 else FAIL
                 ),
                 message=(
                     "Crawler rate limit is configured."
@@ -353,9 +343,7 @@ class TaskAcceptanceService:
                 code="crawler-sleep-window-valid",
                 title="Crawler sleep window is valid",
                 status=(
-                    PASS
-                    if task.min_sleep_seconds <= task.max_sleep_seconds
-                    else FAIL
+                    PASS if task.min_sleep_seconds <= task.max_sleep_seconds else FAIL
                 ),
                 message=(
                     "Task sleep window is valid."

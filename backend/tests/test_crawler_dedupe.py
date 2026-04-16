@@ -2,7 +2,7 @@ from app.crawler.dedupe import dedupe_search_candidates
 from app.testsupport import build_search_candidate
 
 
-def test_dedupe_search_candidates_merges_matched_keywords_and_prioritizes_source_keyword() -> None:
+def test_dedupe_search_candidates_prioritizes_source_keyword() -> None:
     original_candidate = build_search_candidate(
         "BV1dup",
         "和平精英",
@@ -26,7 +26,7 @@ def test_dedupe_search_candidates_merges_matched_keywords_and_prioritizes_source
     assert deduped[0].keyword_match_count == 2
 
 
-def test_dedupe_search_candidates_uses_best_rank_keyword_when_source_keyword_not_present() -> None:
+def test_dedupe_search_candidates_uses_best_rank_without_source_keyword() -> None:
     first_synonym_candidate = build_search_candidate(
         "BV1dup",
         "吃鸡",

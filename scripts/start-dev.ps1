@@ -21,12 +21,6 @@ $frontendNodeModules = Join-Path $frontend "node_modules"
 $runtimeDir = Join-Path $root ".runtime"
 $logDir = Join-Path $runtimeDir "logs"
 $devProcessStateFile = Join-Path $runtimeDir "dev-processes.json"
-$playwrightBrowserRoot = if ($env:PLAYWRIGHT_BROWSERS_PATH) {
-  $env:PLAYWRIGHT_BROWSERS_PATH
-}
-else {
-  Join-Path $env:LOCALAPPDATA "ms-playwright"
-}
 $launchSessionId = Get-Date -Format "yyyyMMdd-HHmmss"
 $frontendUrl = "http://127.0.0.1:5174"
 $backendUrl = "http://127.0.0.1:8014"
@@ -49,24 +43,6 @@ function Ensure-RuntimeDirectory {
   }
 }
 
-function Resolve-HostPythonCommand {
-  if (Get-Command py -ErrorAction SilentlyContinue) {
-    return @{
-      Command = "py"
-      Arguments = @("-3.11")
-    }
-  }
-
-  if (Get-Command python -ErrorAction SilentlyContinue) {
-    return @{
-      Command = "python"
-      Arguments = @()
-    }
-  }
-
-  throw "Python 3.11 was not found. Please install Python 3.11 and retry."
-}
-
 function Ensure-BackendEnvFile {
   if (Test-Path $backendEnv) {
     return
@@ -80,20 +56,6 @@ function Ensure-BackendEnvFile {
   Copy-Item -Path $backendEnvExample -Destination $backendEnv
 }
 
-function Test-VirtualEnvironmentHealthy {
-  if (-not (Test-Path $python)) {
-    return $false
-  }
-
-  try {
-    & $python -c "import sys" 2>$null
-    return $LASTEXITCODE -eq 0
-  }
-  catch {
-    return $false
-  }
-}
-
 function Remove-InvalidVirtualEnvironment {
   if (-not (Test-Path $venvDir)) {
     return
@@ -104,11 +66,15 @@ function Remove-InvalidVirtualEnvironment {
 }
 
 function Ensure-BackendRuntime {
-  if ((Test-Path $venvDir) -and (-not (Test-VirtualEnvironmentHealthy))) {
+  if ((Test-Path $venvDir) -and (-not (Test-PythonExecutableHealthy -PythonPath $python))) {
     Remove-InvalidVirtualEnvironment
   }
 
-  if ((Test-Path $python) -and (Test-Path $celery) -and (Test-VirtualEnvironmentHealthy)) {
+  if (
+    (Test-Path $python) -and
+    (Test-Path $celery) -and
+    (Test-PythonExecutableHealthy -PythonPath $python)
+  ) {
     return
   }
 
@@ -125,41 +91,17 @@ function Ensure-BackendRuntime {
     throw "Backend Python interpreter was not found after creating the virtual environment: $python"
   }
 
-  if (-not (Test-VirtualEnvironmentHealthy)) {
+  if (-not (Test-PythonExecutableHealthy -PythonPath $python)) {
     throw "The local virtual environment was created, but its Python interpreter is unavailable: $python"
   }
 
   Write-LauncherStep "Installing backend dependencies"
   & $python -m pip install --upgrade pip
-  & $python -m pip install -r (Join-Path $backend "requirements.txt")
+  & $python -m pip install -r (Join-Path $backend "requirements.full.txt")
 
   if (-not (Test-Path $celery)) {
     throw "Celery executable was not found after installing backend dependencies: $celery"
   }
-}
-
-function Test-PlaywrightChromiumInstalled {
-  if (-not (Test-Path $playwrightBrowserRoot)) {
-    return $false
-  }
-
-  $chromiumDirectories = @(
-    Get-ChildItem -Path $playwrightBrowserRoot -Directory -Filter "chromium-*" -ErrorAction SilentlyContinue
-  )
-  return $chromiumDirectories.Count -gt 0
-}
-
-function Ensure-PlaywrightRuntime {
-  if (-not (Test-Path $python)) {
-    throw "Backend Python interpreter was not found before installing Playwright: $python"
-  }
-
-  if (Test-PlaywrightChromiumInstalled) {
-    return
-  }
-
-  Write-LauncherStep "Installing Playwright Chromium runtime for the crawler"
-  & $python -m playwright install chromium
 }
 
 function Ensure-FrontendDependencies {
@@ -220,41 +162,13 @@ function New-LogFilePath {
   return (Join-Path $logDir ($launchSessionId + "-" + $Role + "." + $Stream + ".log"))
 }
 
-function Get-ListeningProcessRecords {
-  param(
-    [Parameter(Mandatory = $true)]
-    [int[]]$Ports
-  )
-
-  $records = @()
-  foreach ($port in $Ports) {
-    $connections = @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
-    foreach ($connection in $connections) {
-      $process = Get-CimInstance Win32_Process -Filter ("ProcessId = " + $connection.OwningProcess) -ErrorAction SilentlyContinue
-      if ($null -eq $process) {
-        continue
-      }
-
-      $records += [pscustomobject]@{
-        Port = $port
-        ProcessId = [int]$process.ProcessId
-        Name = $process.Name
-        ExecutablePath = [string]$process.ExecutablePath
-        CommandLine = [string]$process.CommandLine
-      }
-    }
-  }
-
-  return @($records | Sort-Object ProcessId -Unique)
-}
-
 function Test-IsProjectDevProcess {
   param(
     [Parameter(Mandatory = $true)]
     [pscustomobject]$ProcessRecord
   )
 
-  $hints = @(
+  return Test-ProcessMatchesHints -ProcessRecord $ProcessRecord -Hints @(
     [string]$root,
     [string]$backend,
     [string]$frontend,
@@ -262,26 +176,7 @@ function Test-IsProjectDevProcess {
     "uvicorn",
     "vite",
     "npm run dev"
-  ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-
-  $haystacks = @(
-    [string]$ProcessRecord.ExecutablePath,
-    [string]$ProcessRecord.CommandLine
   )
-
-  foreach ($haystack in $haystacks) {
-    if ([string]::IsNullOrWhiteSpace($haystack)) {
-      continue
-    }
-
-    foreach ($hint in $hints) {
-      if ($haystack.IndexOf($hint, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
-        return $true
-      }
-    }
-  }
-
-  return $false
 }
 
 function Stop-LingeringDevProcesses {
@@ -363,21 +258,6 @@ function Save-DevProcessState {
   $state | ConvertTo-Json -Depth 4 | Set-Content -Path $devProcessStateFile -Encoding UTF8
 }
 
-function Test-HttpReady {
-  param(
-    [Parameter(Mandatory = $true)]
-    [string]$Url
-  )
-
-  try {
-    $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 3
-    return $response.StatusCode -ge 200 -and $response.StatusCode -lt 500
-  }
-  catch {
-    return $false
-  }
-}
-
 function Wait-HttpReady {
   param(
     [Parameter(Mandatory = $true)]
@@ -388,7 +268,7 @@ function Wait-HttpReady {
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 
   while ((Get-Date) -lt $deadline) {
-    if (Test-HttpReady -Url $Url) {
+    if (Test-HttpReady -Url $Url -TimeoutSeconds 3) {
       return $true
     }
 
@@ -418,21 +298,7 @@ function Wait-BackendRuntimeReady {
 
   $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
   while ((Get-Date) -lt $deadline) {
-    $payload = Get-BackendHealthSnapshot
-    if ($null -eq $payload) {
-      Start-Sleep -Seconds 2
-      continue
-    }
-
-    $data = $payload.data
-    if (
-      $null -ne $data -and
-      $data.status -eq "ok" -and
-      $data.components.database -eq "ok" -and
-      $data.components.redis -eq "ok" -and
-      $data.components.worker -eq "ok" -and
-      [int]$data.indicators.active_workers -ge 1
-    ) {
+    if (Test-BackendRuntimeReadyNow) {
       return $true
     }
 
@@ -440,6 +306,56 @@ function Wait-BackendRuntimeReady {
   }
 
   return $false
+}
+
+function Test-BackendRuntimeReadyNow {
+  $payload = Get-BackendHealthSnapshot
+  if ($null -eq $payload) {
+    return $false
+  }
+
+  $data = $payload.data
+  return (
+    $null -ne $data -and
+    $data.status -eq "ok" -and
+    $data.components.database -eq "ok" -and
+    $data.components.redis -eq "ok" -and
+    $data.components.worker -eq "ok" -and
+    [int]$data.indicators.active_workers -ge 1
+  )
+}
+
+function Wait-LauncherReady {
+  param(
+    [int]$TimeoutSeconds = 90
+  )
+
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  $backendApiReady = $false
+  $frontendPageReady = $false
+
+  while ((Get-Date) -lt $deadline) {
+    if (-not $backendApiReady) {
+      $backendApiReady = Test-HttpReady -Url $backendHealthUrl
+    }
+    if (-not $frontendPageReady) {
+      $frontendPageReady = Test-HttpReady -Url $frontendUrl
+    }
+
+    if ($backendApiReady -and $frontendPageReady) {
+      return [pscustomobject]@{
+        BackendApiReady = $true
+        FrontendReady = $true
+      }
+    }
+
+    Start-Sleep -Seconds 2
+  }
+
+  return [pscustomobject]@{
+    BackendApiReady = $backendApiReady
+    FrontendReady = $frontendPageReady
+  }
 }
 
 function Get-ContainerDisplayStatus {
@@ -471,7 +387,7 @@ function Get-ProcessDisplayStatus {
     return "running"
   }
 
-  if (Test-HttpReady -Url $ProcessInfo.ProbeUrl) {
+  if (Test-HttpReady -Url $ProcessInfo.ProbeUrl -TimeoutSeconds 3) {
     return "ready"
   }
 
@@ -601,7 +517,6 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
 
 Ensure-BackendEnvFile
 Ensure-BackendRuntime
-Ensure-PlaywrightRuntime
 Ensure-FrontendDependencies
 Ensure-RuntimeDirectory
 Stop-LingeringDevProcesses
@@ -642,22 +557,28 @@ $frontendProcess = Start-BackgroundProcess `
 $processes = @($backendProcess, $workerProcess, $frontendProcess)
 Save-DevProcessState -Processes $processes
 
-Write-LauncherStep "Waiting for backend, worker, and frontend to become available"
-$backendReady = Wait-BackendRuntimeReady
-$frontendReady = Wait-HttpReady -Url $frontendUrl
+Write-LauncherStep "Waiting for backend API and frontend page to become available"
+$launcherReadyState = Wait-LauncherReady
+$backendReady = $launcherReadyState.BackendApiReady
+$frontendReady = $launcherReadyState.FrontendReady
 
 if ($backendReady -and $frontendReady) {
+  $workerReady = Test-BackendRuntimeReadyNow
   if ($SkipOpenBrowser) {
-    Write-LauncherStep "Frontend, backend, and worker are ready"
+    Write-LauncherStep "Frontend and backend API are ready"
   }
   else {
     Write-LauncherStep "Opening the frontend page in your default browser"
     Start-Process $frontendUrl | Out-Null
   }
+
+  if (-not $workerReady) {
+    Write-Warning "The worker is still warming up. The UI is available now, but task execution may not start until the worker reports ready."
+  }
 }
 else {
   if (-not $backendReady) {
-    Write-Warning "The backend runtime did not report a ready worker within the expected time. Check the backend and worker logs."
+    Write-Warning "The backend API did not respond within the expected time. Check the backend logs."
   }
   if (-not $frontendReady) {
     Write-Warning "The frontend page did not respond within the expected time. You can still open $frontendUrl manually."

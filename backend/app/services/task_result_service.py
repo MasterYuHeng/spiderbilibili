@@ -99,8 +99,7 @@ def list_task_videos(
     )
     total = int(
         session.scalar(
-            select(func.count())
-            .select_from(
+            select(func.count()).select_from(
                 _build_task_video_count_subquery(
                     task.id,
                     topic=normalized_topic,
@@ -112,8 +111,8 @@ def list_task_videos(
     )
     total_pages = ceil(total / resolved_page_size) if total else 0
 
-    paged_statement = (
-        base_statement.offset((page - 1) * resolved_page_size).limit(resolved_page_size)
+    paged_statement = base_statement.offset((page - 1) * resolved_page_size).limit(
+        resolved_page_size
     )
     rows = _fetch_task_video_rows(session, paged_statement)
 
@@ -135,6 +134,7 @@ def get_task_video_results(
     sort_order: str = "desc",
     topic: str | None = None,
     filters: TaskVideoMetricFilters | None = None,
+    limit: int | None = None,
 ) -> list[TaskVideoResultRead]:
     task = get_task_or_raise(session, task_id)
     normalized_topic = _normalize_topic_filter(topic)
@@ -145,6 +145,8 @@ def get_task_video_results(
         topic=normalized_topic,
         filters=filters,
     )
+    if limit is not None:
+        statement = statement.limit(limit)
     rows = _fetch_task_video_rows(session, statement)
     return [_build_task_video_read(row) for row in rows]
 
@@ -211,8 +213,7 @@ def get_task_analysis(session: Session, task_id: str) -> TaskAnalysisPayload:
 
     has_ai_summaries = (
         cached_snapshot.has_ai_summaries
-        if cached_snapshot is not None
-        and cached_snapshot.has_ai_summaries is not None
+        if cached_snapshot is not None and cached_snapshot.has_ai_summaries is not None
         else _task_has_ai_summaries(session, task.id)
     )
 
@@ -241,7 +242,7 @@ def _build_task_video_statement(
     topic: str | None = None,
     filters: TaskVideoMetricFilters | None = None,
 ) -> Select[tuple]:
-    latest_snapshot, latest_snapshot_ids = _build_latest_snapshot_aliases()
+    latest_snapshot, latest_snapshot_ids = _build_latest_snapshot_aliases(task_id)
 
     statement = (
         select(TaskVideo, Video, latest_snapshot, VideoTextContent, AiSummary)
@@ -298,17 +299,15 @@ def _build_task_video_count_subquery(
     topic: str | None = None,
     filters: TaskVideoMetricFilters | None = None,
 ):
-    latest_snapshot, latest_snapshot_ids = _build_latest_snapshot_aliases()
+    latest_snapshot, latest_snapshot_ids = _build_latest_snapshot_aliases(task_id)
     statement = select(TaskVideo.id).where(TaskVideo.task_id == task_id).distinct()
-    statement = (
-        statement.outerjoin(
-            latest_snapshot_ids,
-            (latest_snapshot_ids.c.task_id == TaskVideo.task_id)
-            & (latest_snapshot_ids.c.video_id == TaskVideo.video_id),
-        ).outerjoin(
-            latest_snapshot,
-            latest_snapshot.id == latest_snapshot_ids.c.snapshot_id,
-        )
+    statement = statement.outerjoin(
+        latest_snapshot_ids,
+        (latest_snapshot_ids.c.task_id == TaskVideo.task_id)
+        & (latest_snapshot_ids.c.video_id == TaskVideo.video_id),
+    ).outerjoin(
+        latest_snapshot,
+        latest_snapshot.id == latest_snapshot_ids.c.snapshot_id,
     )
     if topic is not None:
         statement = (
@@ -327,7 +326,9 @@ def _build_task_video_count_subquery(
     return statement.subquery()
 
 
-def _build_latest_snapshot_aliases() -> tuple[type[VideoMetricSnapshot], Any]:
+def _build_latest_snapshot_aliases(
+    task_id: str,
+) -> tuple[type[VideoMetricSnapshot], Any]:
     latest_snapshot_ranked = (
         select(
             VideoMetricSnapshot.id.label("snapshot_id"),
@@ -346,7 +347,9 @@ def _build_latest_snapshot_aliases() -> tuple[type[VideoMetricSnapshot], Any]:
                 ),
             )
             .label("row_number"),
-        ).subquery()
+        )
+        .where(VideoMetricSnapshot.task_id == task_id)
+        .subquery()
     )
     latest_snapshot_ids = (
         select(
@@ -695,8 +698,7 @@ def load_cached_analysis_snapshot(
     try:
         summary = TaskAnalysisSummaryRead.model_validate(snapshot.get("summary") or {})
         topics = [
-            TaskTopicRead.model_validate(item)
-            for item in snapshot.get("topics") or []
+            TaskTopicRead.model_validate(item) for item in snapshot.get("topics") or []
         ]
         advanced = TaskAnalysisAdvancedRead.model_validate(
             snapshot.get("advanced") or {}

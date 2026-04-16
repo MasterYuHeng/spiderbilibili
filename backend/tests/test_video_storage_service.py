@@ -124,7 +124,9 @@ def test_video_storage_service_persists_keyword_match_fields() -> None:
         storage_service.persist_scored_video(task, scored_video)
         session.commit()
 
-        task_video = session.scalar(select(TaskVideo).where(TaskVideo.task_id == task.id))
+        task_video = session.scalar(
+            select(TaskVideo).where(TaskVideo.task_id == task.id)
+        )
         assert task_video is not None
         assert task_video.matched_keywords == ["和平精英", "吃鸡"]
         assert task_video.primary_matched_keyword == "和平精英"
@@ -155,7 +157,9 @@ def test_video_storage_service_keeps_hot_mode_keyword_match_fields_empty() -> No
         storage_service.persist_scored_video(task, scored_video)
         session.commit()
 
-        task_video = session.scalar(select(TaskVideo).where(TaskVideo.task_id == task.id))
+        task_video = session.scalar(
+            select(TaskVideo).where(TaskVideo.task_id == task.id)
+        )
         assert task_video is not None
         assert task_video.matched_keywords == []
         assert task_video.primary_matched_keyword is None

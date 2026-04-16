@@ -29,9 +29,18 @@ class FakeReportAiClient:
         return AiJsonResponse(
             payload={
                 "outputs": [
-                    {"key": "melon_reader", "content": "这是吃瓜版结果，直接告诉网友现在最热的是哪个话题。"},
-                    {"key": "pro_analyst", "content": "这是专业版结果，强调证据、结构和数据口径。"},
-                    {"key": "ops_planning", "content": "这是运营版结果，说明该追哪条热点和怎么做选题。"},
+                    {
+                        "key": "melon_reader",
+                        "content": "这是吃瓜版结果，直接告诉网友现在最热的是哪个话题。",
+                    },
+                    {
+                        "key": "pro_analyst",
+                        "content": "这是专业版结果，强调证据、结构和数据口径。",
+                    },
+                    {
+                        "key": "ops_planning",
+                        "content": "这是运营版结果，说明该追哪条热点和怎么做选题。",
+                    },
                 ]
             },
             raw_content='{"outputs":[]}',
@@ -42,7 +51,9 @@ class FakeReportAiClient:
 def build_session() -> Session:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    factory = sessionmaker(
+        bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
+    )
     session = factory()
     bootstrap_system_configs(session, commit=True)
     return session
@@ -134,7 +145,10 @@ def seed_report_task(session: Session) -> str:
         has_subtitle=True,
         description_text="AI report demo",
         subtitle_text="AI report subtitle",
-        combined_text="Video Description:\nAI report demo\n\nVideo Subtitle:\nAI report subtitle",
+        combined_text=(
+            "Video Description:\nAI report demo\n\n"
+            "Video Subtitle:\nAI report subtitle"
+        ),
         combined_text_hash="report-hash",
         language_code="zh-CN",
     )
@@ -188,7 +202,9 @@ def test_task_report_service_returns_ai_outputs_when_ai_available() -> None:
     session = build_session()
     try:
         task_id = seed_report_task(session)
-        report = TaskReportService(session, ai_client=FakeReportAiClient()).build_report(task_id)
+        report = TaskReportService(
+            session, ai_client=FakeReportAiClient()
+        ).build_report(task_id)
 
         assert report.ai_outputs[0].key == "melon_reader"
         assert report.ai_outputs[0].generation_mode == "ai"
@@ -230,7 +246,9 @@ def test_task_report_service_falls_back_when_ai_unavailable() -> None:
     session = build_session()
     try:
         task_id = seed_report_task(session)
-        report = TaskReportService(session, ai_client=FakeReportAiClient(available=False)).build_report(task_id)
+        report = TaskReportService(
+            session, ai_client=FakeReportAiClient(available=False)
+        ).build_report(task_id)
 
         assert report.ai_outputs[0].generation_mode == "fallback"
         assert report.ai_outputs[0].model_name is None

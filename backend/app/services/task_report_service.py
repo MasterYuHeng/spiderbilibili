@@ -21,8 +21,8 @@ from app.schemas.task import (
     TaskReportPayload,
     TaskReportSectionRead,
 )
-from app.services.task_log_service import create_task_log
 from app.services.ai_client import AiPromptBundle, OpenAICompatibleAiClient
+from app.services.task_log_service import create_task_log
 from app.services.task_result_service import (
     get_task_analysis,
     load_cached_analysis_snapshot,
@@ -115,24 +115,50 @@ class TaskReportService:
         report_search_context = self._build_report_search_context(task)
         scope_label = self._build_scope_label(extra_params)
         latest_hot_topic = analysis.advanced.latest_hot_topic.topic
-        momentum_topic = analysis.advanced.momentum_topics[0] if analysis.advanced.momentum_topics else None
-        depth_topic = analysis.advanced.depth_topics[0] if analysis.advanced.depth_topics else None
-        community_topic = analysis.advanced.community_topics[0] if analysis.advanced.community_topics else None
-        trend_topic = self._resolve_trend_topic(analysis.advanced.topic_evolution, latest_hot_topic)
-        top_explosive_video = analysis.advanced.explosive_videos[0] if analysis.advanced.explosive_videos else None
-        top_deep_video = analysis.advanced.deep_videos[0] if analysis.advanced.deep_videos else None
-        top_community_video = analysis.advanced.community_videos[0] if analysis.advanced.community_videos else None
+        momentum_topic = (
+            analysis.advanced.momentum_topics[0]
+            if analysis.advanced.momentum_topics
+            else None
+        )
+        depth_topic = (
+            analysis.advanced.depth_topics[0]
+            if analysis.advanced.depth_topics
+            else None
+        )
+        community_topic = (
+            analysis.advanced.community_topics[0]
+            if analysis.advanced.community_topics
+            else None
+        )
+        trend_topic = self._resolve_trend_topic(
+            analysis.advanced.topic_evolution, latest_hot_topic
+        )
+        top_explosive_video = (
+            analysis.advanced.explosive_videos[0]
+            if analysis.advanced.explosive_videos
+            else None
+        )
+        top_deep_video = (
+            analysis.advanced.deep_videos[0] if analysis.advanced.deep_videos else None
+        )
+        top_community_video = (
+            analysis.advanced.community_videos[0]
+            if analysis.advanced.community_videos
+            else None
+        )
 
+        total_videos = analysis.summary.total_videos
         title = f"{task.keyword or 'B站热点'} 热点内容分析报告"
         subtitle = (
-            f"当前最值得关注的热点主题是“{latest_hot_topic.topic_name}”，本次任务覆盖 {analysis.summary.total_videos} 条视频。"
+            f"当前最值得关注的热点主题是“{latest_hot_topic.topic_name}”，"
+            f"本次任务覆盖 {total_videos} 条视频。"
             if latest_hot_topic is not None
-            else f"本次任务覆盖 {analysis.summary.total_videos} 条视频，已生成结构化热点分析报告。"
+            else (f"本次任务覆盖 {total_videos} 条视频，" "已生成结构化热点分析报告。")
         )
         executive_summary = self._build_executive_summary(
             keyword=task.keyword,
             scope_label=scope_label,
-            total_videos=analysis.summary.total_videos,
+            total_videos=total_videos,
             latest_hot_topic=latest_hot_topic,
             top_explosive_video=top_explosive_video,
             top_deep_video=top_deep_video,
@@ -143,7 +169,7 @@ class TaskReportService:
                 keyword=task.keyword,
                 scope_label=scope_label,
                 generated_at=analysis.generated_at,
-                total_videos=analysis.summary.total_videos,
+                total_videos=total_videos,
                 latest_hot_topic=latest_hot_topic,
                 recommendations=analysis.advanced.recommendations,
             ),
@@ -203,13 +229,19 @@ class TaskReportService:
             title=title,
             subtitle=subtitle,
             executive_summary=executive_summary,
-            latest_hot_topic_name=latest_hot_topic.topic_name if latest_hot_topic is not None else None,
+            latest_hot_topic_name=(
+                latest_hot_topic.topic_name if latest_hot_topic is not None else None
+            ),
             keyword_expansion=report_search_context["keyword_expansion"],
             search_keywords_used=report_search_context["search_keywords_used"],
             expanded_keyword_count=report_search_context["expanded_keyword_count"],
             featured_videos=self._build_featured_videos(
                 analysis.advanced.recommendations,
-                fallback_videos=[top_explosive_video, top_deep_video, top_community_video],
+                fallback_videos=[
+                    top_explosive_video,
+                    top_deep_video,
+                    top_community_video,
+                ],
             ),
             recommendations=analysis.advanced.recommendations,
             popular_authors=analysis.advanced.popular_authors,
@@ -311,6 +343,11 @@ class TaskReportService:
             data_notes=data_notes,
             metric_weight_configs=metric_weight_configs,
         )
+        audience_specs_json = json.dumps(
+            [asdict(spec) for spec in specs],
+            ensure_ascii=False,
+        )
+        context_json = json.dumps(context, ensure_ascii=False)
         prompt = AiPromptBundle(
             system_prompt=(
                 "你是一名负责解读 B 站热点任务的中文分析助手。"
@@ -323,11 +360,19 @@ class TaskReportService:
             user_prompt=(
                 "请根据下面的任务分析上下文，分别生成三类最终成品内容："
                 "1. 吃瓜群众速览版；2. 专业分析版；3. 运营选题版。\n"
-                f"角色要求：{json.dumps([asdict(spec) for spec in specs], ensure_ascii=False)}\n"
-                f"任务上下文：{json.dumps(context, ensure_ascii=False)}"
+                f"角色要求：{audience_specs_json}\n"
+                f"任务上下文：{context_json}"
             ),
-            model=self.ai_client.default_model if hasattr(self.ai_client, "default_model") else "",
-            fallback_model=self.ai_client.fallback_model if hasattr(self.ai_client, "fallback_model") else None,
+            model=(
+                self.ai_client.default_model
+                if hasattr(self.ai_client, "default_model")
+                else ""
+            ),
+            fallback_model=(
+                self.ai_client.fallback_model
+                if hasattr(self.ai_client, "fallback_model")
+                else None
+            ),
             temperature=0.5,
         )
 
@@ -335,15 +380,24 @@ class TaskReportService:
             try:
                 response = self.ai_client.generate_json(prompt)
                 payload = _AiOutputsEnvelope.model_validate(response.payload)
-                outputs_by_key = {item.key: item.content.strip() for item in payload.outputs if item.content.strip()}
+                outputs_by_key = {
+                    item.key: item.content.strip()
+                    for item in payload.outputs
+                    if item.content.strip()
+                }
                 return [
                     TaskReportAiOutputRead(
                         key=spec.key,
                         title=spec.title,
                         audience=spec.audience,
-                        content=outputs_by_key.get(spec.key) or self._build_fallback_ai_output(spec, context),
-                        generation_mode="ai" if spec.key in outputs_by_key else "fallback",
-                        model_name=response.model_name if spec.key in outputs_by_key else None,
+                        content=outputs_by_key.get(spec.key)
+                        or self._build_fallback_ai_output(spec, context),
+                        generation_mode=(
+                            "ai" if spec.key in outputs_by_key else "fallback"
+                        ),
+                        model_name=(
+                            response.model_name if spec.key in outputs_by_key else None
+                        ),
                     )
                     for spec in specs
                 ]
@@ -381,7 +435,9 @@ class TaskReportService:
             "scope_label": scope_label,
             "generated_at": generated_at.isoformat(),
             "executive_summary": executive_summary,
-            "latest_hot_topic": latest_hot_topic.topic_name if latest_hot_topic is not None else None,
+            "latest_hot_topic": (
+                latest_hot_topic.topic_name if latest_hot_topic is not None else None
+            ),
             "sections": [
                 {
                     "key": section.key,
@@ -453,7 +509,9 @@ class TaskReportService:
         if not isinstance(task_options, dict):
             return "B站全站"
         if str(task_options.get("search_scope") or "site") == "partition":
-            partition_name = task_options.get("partition_name") or task_options.get("partition_tid")
+            partition_name = task_options.get("partition_name") or task_options.get(
+                "partition_tid"
+            )
             return f"固定分区：{partition_name}"
         return "B站全站"
 
@@ -489,7 +547,8 @@ class TaskReportService:
             else "社区扩散信号仍需继续积累。"
         )
         return (
-            f"本报告基于“{keyword}”在“{scope_label}”下抓取的 {total_videos} 条视频生成。"
+            f"本报告基于“{keyword}”在“{scope_label}”下抓取的 "
+            f"{total_videos} 条视频生成。"
             f"{topic_clause}{explosive_clause}{depth_clause}{community_clause}"
         )
 
@@ -503,6 +562,9 @@ class TaskReportService:
         latest_hot_topic: TaskAnalysisTopicInsightRead | None,
         recommendations: list[TaskAnalysisRecommendationRead],
     ) -> TaskReportSectionRead:
+        latest_topic_name = (
+            latest_hot_topic.topic_name if latest_hot_topic is not None else "暂无"
+        )
         return TaskReportSectionRead(
             key="overview",
             title="任务总览",
@@ -512,7 +574,7 @@ class TaskReportService:
                 f"抓取范围：{scope_label}",
                 f"纳入分析的视频数：{total_videos}",
                 f"报告生成时间：{generated_at.isoformat()}",
-                f"当前最新热点主题：{latest_hot_topic.topic_name if latest_hot_topic is not None else '暂无'}",
+                f"当前最新热点主题：{latest_topic_name}",
                 f"已生成推荐分组：{len(recommendations)} 组",
             ],
         )
@@ -528,16 +590,22 @@ class TaskReportService:
         bullets = list(supporting_points[:6])
         if momentum_topic is not None:
             bullets.append(
-                f"爆发力领先主题是“{momentum_topic.topic_name}”，均值 {momentum_topic.average_burst_score or 0:.2f}。"
+                f"爆发力领先主题是“{momentum_topic.topic_name}”，"
+                f"均值 {momentum_topic.average_burst_score or 0:.2f}。"
             )
         if community_topic is not None:
             bullets.append(
-                f"社区扩散领先主题是“{community_topic.topic_name}”，均值 {community_topic.average_community_score or 0:.2f}。"
+                f"社区扩散领先主题是“{community_topic.topic_name}”，"
+                f"均值 {community_topic.average_community_score or 0:.2f}。"
             )
+        summary_topic_name = (
+            latest_hot_topic.topic_name if latest_hot_topic else "暂无明确热点主题"
+        )
+        default_summary = "当前任务中最值得优先关注的主题是" f"“{summary_topic_name}”。"
         return TaskReportSectionRead(
             key="hotspot",
             title="热点主题判断",
-            summary=reason or f"当前任务中最值得优先关注的主题是“{latest_hot_topic.topic_name if latest_hot_topic else '暂无明确热点主题'}”。",
+            summary=reason or default_summary,
             bullets=bullets,
         )
 
@@ -551,14 +619,21 @@ class TaskReportService:
         bullets: list[str] = []
         if topic is not None:
             bullets.append(
-                f"爆发力最强主题：{topic.topic_name}，平均爆发力 {topic.average_burst_score or 0:.2f}，平均播放 {topic.average_view_count:.0f}。"
+                f"爆发力最强主题：{topic.topic_name}，"
+                f"平均爆发力 {topic.average_burst_score or 0:.2f}，"
+                f"平均播放 {topic.average_view_count:.0f}。"
             )
         if video is not None:
+            growth_ratio = (video.search_to_current_view_growth_ratio or 0) * 100
             bullets.append(
-                f"爆发视频样本：《{video.title}》，爆发力 {video.burst_score or 0:.2f}，搜索到当前播放增长率 {((video.search_to_current_view_growth_ratio or 0) * 100):.2f}%。"
+                f"爆发视频样本：《{video.title}》，"
+                f"爆发力 {video.burst_score or 0:.2f}，"
+                f"搜索到当前播放增长率 {growth_ratio:.2f}%。"
             )
             bullets.append(
-                f"发布以来小时均播放 {video.views_per_hour_since_publish or 0:.2f}，历史快照数 {video.historical_snapshot_count}。"
+                f"发布以来小时均播放 "
+                f"{video.views_per_hour_since_publish or 0:.2f}，"
+                f"历史快照数 {video.historical_snapshot_count}。"
             )
         return TaskReportSectionRead(
             key="burst",
@@ -576,15 +651,25 @@ class TaskReportService:
             return None
         bullets: list[str] = []
         if topic is not None:
+            average_like_ratio = (topic.average_like_view_ratio or 0) * 100
             bullets.append(
-                f"内容深度最强主题：{topic.topic_name}，平均深度 {topic.average_depth_score or 0:.2f}，平均点赞率 {(topic.average_like_view_ratio or 0) * 100:.2f}%。"
+                f"内容深度最强主题：{topic.topic_name}，"
+                f"平均深度 {topic.average_depth_score or 0:.2f}，"
+                f"平均点赞率 {average_like_ratio:.2f}%。"
             )
         if video is not None:
+            like_ratio = (video.like_view_ratio or 0) * 100
+            coin_ratio = (video.coin_view_ratio or 0) * 100
+            favorite_ratio = (video.favorite_view_ratio or 0) * 100
             bullets.append(
-                f"高深度视频样本：《{video.title}》，深度 {video.depth_score or 0:.2f}，完播代理分 {video.completion_proxy_score or 0:.4f}。"
+                f"高深度视频样本：《{video.title}》，"
+                f"深度 {video.depth_score or 0:.2f}，"
+                f"完播代理分 {video.completion_proxy_score or 0:.4f}。"
             )
             bullets.append(
-                f"点赞率 {(video.like_view_ratio or 0) * 100:.2f}%，投币率 {(video.coin_view_ratio or 0) * 100:.2f}%，收藏率 {(video.favorite_view_ratio or 0) * 100:.2f}%。"
+                f"点赞率 {like_ratio:.2f}%，"
+                f"投币率 {coin_ratio:.2f}%，"
+                f"收藏率 {favorite_ratio:.2f}%。"
             )
         return TaskReportSectionRead(
             key="depth",
@@ -602,15 +687,24 @@ class TaskReportService:
             return None
         bullets: list[str] = []
         if topic is not None:
+            average_share_ratio = (topic.average_share_rate or 0) * 100
             bullets.append(
-                f"社区扩散最强主题：{topic.topic_name}，平均扩散分 {topic.average_community_score or 0:.2f}，平均分享率 {(topic.average_share_rate or 0) * 100:.2f}%。"
+                f"社区扩散最强主题：{topic.topic_name}，"
+                f"平均扩散分 {topic.average_community_score or 0:.2f}，"
+                f"平均分享率 {average_share_ratio:.2f}%。"
             )
         if video is not None:
+            share_ratio = (video.share_view_ratio or 0) * 100
+            reply_ratio = (video.reply_view_ratio or 0) * 100
+            danmaku_ratio = (video.danmaku_view_ratio or 0) * 100
             bullets.append(
-                f"高扩散视频样本：《{video.title}》，社区扩散 {video.community_score or 0:.2f}。"
+                f"高扩散视频样本：《{video.title}》，"
+                f"社区扩散 {video.community_score or 0:.2f}。"
             )
             bullets.append(
-                f"分享率 {(video.share_view_ratio or 0) * 100:.2f}%，评论率 {(video.reply_view_ratio or 0) * 100:.2f}%，弹幕率 {(video.danmaku_view_ratio or 0) * 100:.2f}%。"
+                f"分享率 {share_ratio:.2f}%，"
+                f"评论率 {reply_ratio:.2f}%，"
+                f"弹幕率 {danmaku_ratio:.2f}%。"
             )
         return TaskReportSectionRead(
             key="community",
@@ -633,8 +727,14 @@ class TaskReportService:
                 "适合结合发布时间窗口继续观察热度变化。"
             ),
             bullets=[
-                f"最新热度时间桶：{trend.latest_bucket or '暂无'}，热度指数 {trend.latest_topic_heat_index or 0:.2f}。",
-                f"峰值时间桶：{trend.peak_bucket or '暂无'}，峰值热度指数 {trend.peak_topic_heat_index or 0:.2f}。",
+                (
+                    f"最新热度时间桶：{trend.latest_bucket or '暂无'}，"
+                    f"热度指数 {trend.latest_topic_heat_index or 0:.2f}。"
+                ),
+                (
+                    f"峰值时间桶：{trend.peak_bucket or '暂无'}，"
+                    f"峰值热度指数 {trend.peak_topic_heat_index or 0:.2f}。"
+                ),
                 f"总演化点数：{len(trend.points)}。",
             ],
         )
@@ -646,11 +746,16 @@ class TaskReportService:
         bullets: list[str] = []
         evidence: list[str] = []
         for recommendation in recommendations[:4]:
-            bullets.append(f"{recommendation.title}：{recommendation.description or '面向当前任务的推荐分组。'}")
+            bullets.append(
+                f"{recommendation.title}："
+                f"{recommendation.description or '面向当前任务的推荐分组。'}"
+            )
             if recommendation.videos:
                 top_video = recommendation.videos[0]
                 evidence.append(
-                    f"建议优先看《{top_video.title}》，主题 {top_video.topic_name or '未归类'}，综合分 {top_video.composite_score:.2f}。"
+                    f"建议优先看《{top_video.title}》，"
+                    f"主题 {top_video.topic_name or '未归类'}，"
+                    f"综合分 {top_video.composite_score:.2f}。"
                 )
         return TaskReportSectionRead(
             key="recommendation",
@@ -680,12 +785,17 @@ class TaskReportService:
         return TaskReportSectionRead(
             key="authors",
             title="热门 UP 主画像",
-            summary="从热点视频中先汇总出高频且高热度的 up 主，再补抓其投稿视频，形成更稳定的创作者画像。",
+            summary=(
+                "从热点视频中先汇总出高频且高热度的 up 主，"
+                "再补抓其投稿视频，形成更稳定的创作者画像。"
+            ),
             bullets=bullets,
             evidence=evidence,
         )
 
-    def _build_methodology_section(self, data_notes: list[str]) -> TaskReportSectionRead:
+    def _build_methodology_section(
+        self, data_notes: list[str]
+    ) -> TaskReportSectionRead:
         return TaskReportSectionRead(
             key="methodology",
             title="口径说明与边界",
@@ -718,7 +828,9 @@ class TaskReportService:
             ),
         ]
 
-    def _build_fallback_ai_output(self, spec: _PromptSpec, context: dict[str, Any]) -> str:
+    def _build_fallback_ai_output(
+        self, spec: _PromptSpec, context: dict[str, Any]
+    ) -> str:
         latest_hot_topic = context.get("latest_hot_topic") or "暂无明确热点主题"
         top_videos = context.get("top_videos") or []
         video_names = [item.get("title") for item in top_videos if item.get("title")]
@@ -728,16 +840,22 @@ class TaskReportService:
             for item in context.get("recommendations") or []
             if item.get("title")
         ]
-        recommendation_text = "；".join(recommendation_titles[:3]) if recommendation_titles else "暂无推荐分组"
+        recommendation_text = (
+            "；".join(recommendation_titles[:3])
+            if recommendation_titles
+            else "暂无推荐分组"
+        )
         section_summaries = [
             f"{item.get('title')}：{item.get('summary')}"
             for item in context.get("sections") or []
             if item.get("title") and item.get("summary")
         ]
         section_text = "\n".join(section_summaries[:5])
+        scope_label = context.get("scope_label")
         return (
             f"面向“{spec.audience}”的最终结果如下。\n"
-            f"本次任务范围为 {context.get('scope_label')}，核心热点主题是“{latest_hot_topic}”。\n"
+            f"本次任务范围为 {scope_label}，"
+            f"核心热点主题是“{latest_hot_topic}”。\n"
             f"当前最值得优先关注的视频包括：{top_video_text}。\n"
             f"建议重点查看这些推荐分组：{recommendation_text}。\n"
             f"从报告角度看，你最需要先抓住的是：{context.get('executive_summary')}\n"
@@ -758,22 +876,25 @@ class TaskReportService:
         sections: list[TaskReportSectionRead],
         ai_outputs: list[TaskReportAiOutputRead],
     ) -> str:
+        keyword_expansion_enabled = (
+            "是" if keyword_expansion and keyword_expansion.enabled else "否"
+        )
+        expansion_status = (
+            keyword_expansion.status if keyword_expansion is not None else "skipped"
+        )
+        search_keywords_text = (
+            "、".join(search_keywords_used) if search_keywords_used else "--"
+        )
         lines = [f"# {title}"]
         if subtitle:
             lines.append(subtitle)
         lines.append("")
         lines.append("## 搜索口径")
         lines.append(f"- 原始关键词：{task_keyword or '--'}")
-        lines.append(
-            f"- 是否启用关键词同义补充：{'是' if keyword_expansion and keyword_expansion.enabled else '否'}"
-        )
-        lines.append(
-            f"- 扩词状态：{keyword_expansion.status if keyword_expansion is not None else 'skipped'}"
-        )
+        lines.append(f"- 是否启用关键词同义补充：{keyword_expansion_enabled}")
+        lines.append(f"- 扩词状态：{expansion_status}")
         lines.append(f"- 新增同义词数量：{expanded_keyword_count}")
-        lines.append(
-            f"- 实际搜索词：{'、'.join(search_keywords_used) if search_keywords_used else '--'}"
-        )
+        lines.append(f"- 实际搜索词：{search_keywords_text}")
         lines.append("## 执行摘要")
         lines.append(executive_summary)
         for section in sections:

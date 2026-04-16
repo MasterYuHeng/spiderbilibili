@@ -177,9 +177,7 @@ def test_expand_keyword_returns_fallback_when_cleaned_synonyms_are_empty() -> No
     assert result["status"] == "fallback"
     assert result["generated_synonyms"] == []
     assert result["expanded_keywords"] == ["和平精英"]
-    assert (
-        result["error_message"] == "AI keyword expansion returned no valid synonyms."
-    )
+    assert result["error_message"] == "AI keyword expansion returned no valid synonyms."
     _assert_iso8601_timestamp(result["generated_at"])
 
 

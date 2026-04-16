@@ -1,0 +1,15 @@
+name: spiderbilibili-local-app
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile.local-app
+      args:
+        VITE_APP_TITLE: ${VITE_APP_TITLE:-spiderbilibili}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://127.0.0.1:8014}
+    image: spiderbilibili-nginx:local-app
+    container_name: spiderbilibili-local-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"

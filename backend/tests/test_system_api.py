@@ -55,7 +55,9 @@ def test_system_settings_endpoints_can_read_and_update_keys() -> None:
             {
                 "browser": "edge",
                 "label": "Microsoft Edge",
-                "user_data_dir": r"C:\Users\tester\AppData\Local\Microsoft\Edge\User Data",
+                "user_data_dir": (
+                    r"C:\Users\tester\AppData\Local\Microsoft\Edge\User Data"
+                ),
                 "default_profile_id": "edge:Default",
                 "profiles": [
                     {
@@ -98,7 +100,9 @@ def test_system_settings_endpoints_can_read_and_update_keys() -> None:
 
         update_bilibili_response = client.put(
             "/api/bilibili-settings",
-            json={"cookie": "SESSDATA=runtime-sess; bili_jct=runtime-jct; DedeUserID=2233"},
+            json={
+                "cookie": "SESSDATA=runtime-sess; bili_jct=runtime-jct; DedeUserID=2233"
+            },
         )
         assert update_bilibili_response.status_code == 200
         updated_bilibili_payload = update_bilibili_response.json()["data"]
@@ -139,7 +143,9 @@ def test_system_bilibili_import_endpoint_returns_imported_cookie() -> None:
             "import_source": {
                 "browser": "edge",
                 "profile_directory": "Default",
-                "user_data_dir": r"C:\Users\tester\AppData\Local\Microsoft\Edge\User Data",
+                "user_data_dir": (
+                    r"C:\Users\tester\AppData\Local\Microsoft\Edge\User Data"
+                ),
                 "label": "Microsoft Edge / Default",
             },
         }

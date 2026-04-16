@@ -12,7 +12,7 @@ def test_parse_popular_page_data_normalizes_hot_video_candidates() -> None:
                 {
                     "bvid": "BV1hot12345",
                     "aid": 123,
-                    "title": "<em class=\"keyword\">Hot</em> video",
+                    "title": '<em class="keyword">Hot</em> video',
                     "desc": "Current hot item",
                     "owner": {"name": "Hot UP", "mid": 999},
                     "pic": "//i0.hdslb.com/hot.jpg",

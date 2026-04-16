@@ -1,3 +1,5 @@
+from typing import Annotated, Literal, cast
+
 from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.orm import Session
 
@@ -7,9 +9,11 @@ from app.db.session import get_db_session
 from app.schemas.common import ApiResponse, HealthPayload, MessagePayload
 from app.schemas.system import (
     AiSettingsPayload,
-    BilibiliConfigRead,
+    BilibiliAccountProfileRead,
     BilibiliBrowserImportRequest,
+    BilibiliConfigRead,
     BilibiliConfigUpdateRequest,
+    BrowserSourceRead,
     DeepSeekConfigRead,
     DeepSeekConfigUpdateRequest,
 )
@@ -33,6 +37,8 @@ from app.utils.responses import success_response
 
 router = APIRouter()
 DbSession = Session
+DbSessionDep = Annotated[DbSession, Depends(get_db_session)]
+KeySource = Literal["runtime", "environment", "unset"]
 
 
 @router.get("/", response_model=ApiResponse[MessagePayload], summary="Root endpoint")
@@ -49,7 +55,7 @@ def root(request: Request) -> ApiResponse[MessagePayload]:
 )
 def get_ai_settings(
     request: Request,
-    session: DbSession = Depends(get_db_session),
+    session: DbSessionDep,
 ) -> ApiResponse[AiSettingsPayload]:
     payload = AiSettingsPayload(
         deepseek=_build_deepseek_config_payload(session),
@@ -67,7 +73,7 @@ def get_ai_settings(
 def update_deepseek_settings(
     payload: DeepSeekConfigUpdateRequest,
     request: Request,
-    session: DbSession = Depends(get_db_session),
+    session: DbSessionDep,
 ) -> ApiResponse[DeepSeekConfigRead]:
     update_deepseek_runtime_config(session, api_key=payload.api_key)
     session.commit()
@@ -84,7 +90,7 @@ def update_deepseek_settings(
 def update_bilibili_settings(
     payload: BilibiliConfigUpdateRequest,
     request: Request,
-    session: DbSession = Depends(get_db_session),
+    session: DbSessionDep,
 ) -> ApiResponse[BilibiliConfigRead]:
     account_profile, validation_message = fetch_bilibili_account_profile(payload.cookie)
     update_bilibili_runtime_auth_config(
@@ -108,7 +114,7 @@ def update_bilibili_settings(
 def import_bilibili_settings_from_browser(
     payload: BilibiliBrowserImportRequest,
     request: Request,
-    session: DbSession = Depends(get_db_session),
+    session: DbSessionDep,
 ) -> ApiResponse[BilibiliConfigRead]:
     import_result = import_bilibili_auth_from_browser(
         browser=payload.browser,
@@ -186,15 +192,23 @@ def _build_deepseek_config_payload(session: Session) -> DeepSeekConfigRead:
     resolved = resolve_ai_client_settings(session, settings)
     runtime_record = get_system_config(session, AI_RUNTIME_OVERRIDES_KEY)
     runtime_api_key = ""
-    if runtime_record and runtime_record.is_active and isinstance(runtime_record.config_value, dict):
-        runtime_api_key = _first_non_empty(runtime_record.config_value.get("api_key", ""))
+    if (
+        runtime_record
+        and runtime_record.is_active
+        and isinstance(runtime_record.config_value, dict)
+    ):
+        runtime_api_key = _first_non_empty(
+            runtime_record.config_value.get("api_key", "")
+        )
     environment_api_key = _first_non_empty(
         settings.deepseek_api_key,
         settings.ai_api_key if settings.normalized_ai_provider == "deepseek" else "",
     )
     effective_api_key = runtime_api_key or environment_api_key
-    key_source = (
-        "runtime" if runtime_api_key else "environment" if environment_api_key else "unset"
+    key_source: KeySource = (
+        "runtime"
+        if runtime_api_key
+        else "environment" if environment_api_key else "unset"
     )
     deepseek_base_url = _first_non_empty(
         settings.ai_base_url,
@@ -223,7 +237,11 @@ def _build_deepseek_config_payload(session: Session) -> DeepSeekConfigRead:
         fallback_model=deepseek_fallback_model,
         timeout_seconds=float(resolved["timeout_seconds"]),
         max_retries=int(resolved["max_retries"]),
-        updated_at=runtime_record.updated_at if runtime_record and runtime_record.is_active else None,
+        updated_at=(
+            runtime_record.updated_at
+            if runtime_record and runtime_record.is_active
+            else None
+        ),
     )
 
 
@@ -237,22 +255,35 @@ def _build_bilibili_config_payload(session: Session) -> BilibiliConfigRead:
         import_summary = _first_non_empty(import_source.get("label", ""))
 
     account_profile = resolved.get("account_profile")
+    normalized_account_profile = (
+        BilibiliAccountProfileRead.model_validate(account_profile)
+        if isinstance(account_profile, dict)
+        else None
+    )
+    browser_sources = [
+        BrowserSourceRead.model_validate(item)
+        for item in discover_bilibili_browser_sources()
+    ]
     return BilibiliConfigRead(
         cookie=str(resolved["cookie"]),
         cookie_configured=bool(resolved["cookie_configured"]),
-        key_source=str(resolved["key_source"]),
+        key_source=cast(KeySource, str(resolved["key_source"])),
         sessdata=str(resolved["bilibili_sessdata"]),
         bili_jct=str(resolved["bilibili_bili_jct"]),
         dede_user_id=str(resolved["bilibili_dedeuserid"]),
         buvid3=str(resolved["bilibili_buvid3"]),
         buvid4=str(resolved["bilibili_buvid4"]),
-        account_profile=account_profile if isinstance(account_profile, dict) else None,
+        account_profile=normalized_account_profile,
         import_summary=import_summary,
         validation_message=(
             str(resolved.get("validation_message") or "").strip() or None
         ),
-        browser_sources=discover_bilibili_browser_sources(),
-        updated_at=runtime_record.updated_at if runtime_record and runtime_record.is_active else None,
+        browser_sources=browser_sources,
+        updated_at=(
+            runtime_record.updated_at
+            if runtime_record and runtime_record.is_active
+            else None
+        ),
     )
 
 

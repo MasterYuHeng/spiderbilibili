@@ -9,26 +9,38 @@ import sqlite3
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict, cast
 
 import httpx
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from playwright.sync_api import Error as PlaywrightError
-from playwright.sync_api import sync_playwright
 
 from app.core.config import get_settings
 from app.core.exceptions import ValidationError
+from app.core.optional_dependencies import ensure_optional_dependency
 
 TARGET_COOKIE_NAMES = {"SESSDATA", "bili_jct", "DedeUserID", "buvid3", "buvid4"}
+
+
+class ChromiumSourceConfig(TypedDict):
+    label: str
+    user_data_dir: Path
+    channel: str
+
+
 CHROMIUM_SOURCES = {
     "edge": {
         "label": "Microsoft Edge",
-        "user_data_dir": Path(os.getenv("LOCALAPPDATA", "")) / "Microsoft" / "Edge" / "User Data",
+        "user_data_dir": Path(os.getenv("LOCALAPPDATA", ""))
+        / "Microsoft"
+        / "Edge"
+        / "User Data",
         "channel": "msedge",
     },
     "chrome": {
         "label": "Google Chrome",
-        "user_data_dir": Path(os.getenv("LOCALAPPDATA", "")) / "Google" / "Chrome" / "User Data",
+        "user_data_dir": Path(os.getenv("LOCALAPPDATA", ""))
+        / "Google"
+        / "Chrome"
+        / "User Data",
         "channel": "chrome",
     },
 }
@@ -55,16 +67,19 @@ class BrowserCookieLockedError(RuntimeError):
 def discover_bilibili_browser_sources() -> list[dict[str, Any]]:
     sources: list[dict[str, Any]] = []
     for browser, config in CHROMIUM_SOURCES.items():
-        user_data_dir = Path(config["user_data_dir"])
+        typed_config = cast(ChromiumSourceConfig, config)
+        user_data_dir = typed_config["user_data_dir"]
         if not user_data_dir.exists():
             continue
 
         profiles = _discover_profiles(user_data_dir, browser)
-        default_profile_id = _detect_default_profile_id(user_data_dir, browser, profiles)
+        default_profile_id = _detect_default_profile_id(
+            user_data_dir, browser, profiles
+        )
         sources.append(
             {
                 "browser": browser,
-                "label": str(config["label"]),
+                "label": typed_config["label"],
                 "user_data_dir": str(user_data_dir),
                 "default_profile_id": default_profile_id,
                 "profiles": profiles,
@@ -80,7 +95,9 @@ def import_bilibili_auth_from_browser(
     user_data_dir: str | None = None,
 ) -> dict[str, Any]:
     if os.name != "nt":
-        raise ValidationError(message="当前仅支持在 Windows 环境中自动读取浏览器 Cookie。")
+        raise ValidationError(
+            message="当前仅支持在 Windows 环境中自动读取浏览器 Cookie。"
+        )
 
     resolved_browser, resolved_user_data_dir = _resolve_user_data_dir(
         browser=browser,
@@ -106,7 +123,10 @@ def import_bilibili_auth_from_browser(
 
     if not cookie:
         raise ValidationError(
-            message="没有在所选浏览器配置中读取到 Bilibili 登录 Cookie，请确认当前配置已登录 B站。"
+            message=(
+                "没有在所选浏览器配置中读取到 Bilibili 登录 Cookie，"
+                "请确认当前配置已登录 B站。"
+            )
         )
 
     account_profile, validation_message = fetch_bilibili_account_profile(cookie)
@@ -123,7 +143,9 @@ def import_bilibili_auth_from_browser(
     }
 
 
-def fetch_bilibili_account_profile(cookie: str) -> tuple[dict[str, Any] | None, str | None]:
+def fetch_bilibili_account_profile(
+    cookie: str,
+) -> tuple[dict[str, Any] | None, str | None]:
     normalized_cookie = str(cookie or "").strip()
     if not normalized_cookie:
         return None, None
@@ -159,10 +181,12 @@ def fetch_bilibili_account_profile(cookie: str) -> tuple[dict[str, Any] | None, 
             "is_login": True,
             "mid": str(data.get("mid") or "").strip() or None,
             "username": str(data.get("uname") or "").strip() or None,
-            "level": int(data.get("level_info", {}).get("current_level"))
-            if isinstance(data.get("level_info"), dict)
-            and data.get("level_info", {}).get("current_level") is not None
-            else None,
+            "level": (
+                int(data.get("level_info", {}).get("current_level"))
+                if isinstance(data.get("level_info"), dict)
+                and data.get("level_info", {}).get("current_level") is not None
+                else None
+            ),
             "avatar_url": str(data.get("face") or "").strip() or None,
         },
         None,
@@ -193,9 +217,12 @@ def _discover_profiles(user_data_dir: Path, browser: str) -> list[dict[str, Any]
         profiles.append(
             {
                 "id": f"{browser}:{profile_dir.name}",
-                "label": "默认配置" if profile_dir.name == "Default" else profile_dir.name,
+                "label": (
+                    "默认配置" if profile_dir.name == "Default" else profile_dir.name
+                ),
                 "directory_name": profile_dir.name,
-                "cookie_db_exists": _resolve_cookie_database_path(profile_dir) is not None,
+                "cookie_db_exists": _resolve_cookie_database_path(profile_dir)
+                is not None,
             }
         )
     return profiles
@@ -240,7 +267,8 @@ def _resolve_user_data_dir(
         config = CHROMIUM_SOURCES.get(normalized_browser)
         if config is None:
             raise ValidationError(message="暂不支持所选浏览器，请选择 Edge 或 Chrome。")
-        user_data_path = Path(config["user_data_dir"])
+        typed_config = cast(ChromiumSourceConfig, config)
+        user_data_path = typed_config["user_data_dir"]
         if not user_data_path.exists():
             raise ValidationError(message="本机未检测到所选浏览器的用户数据目录。")
         return normalized_browser, user_data_path
@@ -351,7 +379,9 @@ def _read_bilibili_cookies_from_database(
 def _load_chromium_master_key(user_data_dir: Path) -> bytes:
     local_state_path = user_data_dir / "Local State"
     if not local_state_path.exists():
-        raise ValidationError(message="未找到浏览器 Local State 文件，无法解密 Cookie。")
+        raise ValidationError(
+            message="未找到浏览器 Local State 文件，无法解密 Cookie。"
+        )
 
     try:
         payload = json.loads(local_state_path.read_text(encoding="utf-8"))
@@ -366,10 +396,11 @@ def _load_chromium_master_key(user_data_dir: Path) -> bytes:
 
 
 def _decrypt_chromium_cookie_value(*, encrypted_value: bytes, master_key: bytes) -> str:
+    aesgcm = _load_aesgcm_runtime()
     if encrypted_value[:3] in {b"v10", b"v11"}:
         nonce = encrypted_value[3:15]
         ciphertext = encrypted_value[15:]
-        plain_text = AESGCM(master_key).decrypt(nonce, ciphertext, None)
+        plain_text = aesgcm(master_key).decrypt(nonce, ciphertext, None)
         return plain_text.decode("utf-8", errors="replace").strip()
 
     plain_text = _crypt_unprotect_data(encrypted_value)
@@ -412,6 +443,7 @@ def _crypt_unprotect_data(encrypted_data: bytes) -> bytes:
 
 
 def _capture_bilibili_cookie_via_playwright(*, browser: str) -> str:
+    sync_playwright, playwright_error = _load_playwright_runtime()
     settings = get_settings()
     browser_config = CHROMIUM_SOURCES.get(browser, {})
     channel = browser_config.get("channel")
@@ -425,7 +457,7 @@ def _capture_bilibili_cookie_via_playwright(*, browser: str) -> str:
                 channel=channel,
                 args=["--disable-features=msEdgeSidebarV2"],
             )
-        except PlaywrightError:
+        except playwright_error:
             launched_browser = launch_fn(
                 headless=False,
                 args=["--disable-features=msEdgeSidebarV2"],
@@ -455,7 +487,10 @@ def _capture_bilibili_cookie_via_playwright(*, browser: str) -> str:
             launched_browser.close()
 
     raise ValidationError(
-        message="本机浏览器 Cookie 正被占用，系统已尝试打开登录窗口，但你没有在限定时间内完成 B站登录。请重试。"
+        message=(
+            "本机浏览器 Cookie 正被占用，系统已尝试打开登录窗口，"
+            "但你没有在限定时间内完成 B站登录。请重试。"
+        )
     )
 
 
@@ -471,3 +506,16 @@ def _compose_cookie_string(cookie_map: dict[str, str]) -> str:
 def _browser_label(browser: str) -> str:
     config = CHROMIUM_SOURCES.get(browser)
     return str(config["label"]) if config is not None else browser
+
+
+def _load_aesgcm_runtime() -> type[Any]:
+    module = ensure_optional_dependency(
+        "cryptography",
+        "cryptography.hazmat.primitives.ciphers.aead",
+    )
+    return module.AESGCM
+
+
+def _load_playwright_runtime() -> tuple[Any, type[Exception]]:
+    module = ensure_optional_dependency("playwright", "playwright.sync_api")
+    return module.sync_playwright, module.Error

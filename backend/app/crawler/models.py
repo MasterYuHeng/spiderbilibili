@@ -124,9 +124,7 @@ class SubtitleData:
     @property
     def combined_text(self) -> str:
         return "\n".join(
-            segment.content
-            for segment in self.segments
-            if segment.content
+            segment.content for segment in self.segments if segment.content
         )
 
 

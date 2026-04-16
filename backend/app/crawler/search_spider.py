@@ -91,7 +91,9 @@ class BilibiliSearchSpider:
 
         if self.raw_archive is not None:
             archive_suffix = f"{keyword}_tids_{tids}" if tids is not None else keyword
-            self.raw_archive.save_json("search", f"page_{page}_{archive_suffix}", payload)
+            self.raw_archive.save_json(
+                "search", f"page_{page}_{archive_suffix}", payload
+            )
 
         return self.parse_search_page_data(payload, keyword=keyword, page=page)
 

@@ -1,19 +1,47 @@
 from __future__ import annotations
 
 import json
-from typing import Any
-
-from playwright.sync_api import (
-    Browser,
-    BrowserContext,
-    Error,
-    Playwright,
-    sync_playwright,
-)
+import subprocess
+import sys
+from typing import TYPE_CHECKING, Any, cast
 
 from app.core.config import Settings, get_settings
+from app.core.logging import get_logger
+from app.core.optional_dependencies import ensure_optional_dependency
 from app.crawler.auth import build_bilibili_playwright_cookies
 from app.crawler.exceptions import BilibiliParseError, BilibiliRequestError
+
+if TYPE_CHECKING:
+    from playwright.sync_api import Browser, BrowserContext, Error, Playwright
+    from playwright.sync_api import sync_playwright as sync_playwright
+else:
+    Browser = BrowserContext = Playwright = Any
+    Error = Exception
+    sync_playwright = None
+
+_sync_playwright = sync_playwright
+_playwright_error_type = None
+
+
+def _load_playwright_runtime() -> tuple[Any, type[Exception]]:
+    global Error, _sync_playwright, _playwright_error_type, sync_playwright
+
+    if sync_playwright is not None and _sync_playwright is not sync_playwright:
+        _sync_playwright = sync_playwright
+
+    if _sync_playwright is None:
+        playwright_sync_api = ensure_optional_dependency(
+            "playwright",
+            "playwright.sync_api",
+        )
+        sync_playwright = playwright_sync_api.sync_playwright
+        Error = playwright_sync_api.Error
+        _sync_playwright = sync_playwright
+
+    if _playwright_error_type is None:
+        _playwright_error_type = Error
+
+    return _sync_playwright, _playwright_error_type
 
 
 class BilibiliBrowserClient:
@@ -78,8 +106,7 @@ class BilibiliBrowserClient:
                             status: response.status,
                             text: await response.text()
                         };
-                    }"""
-                    .replace(
+                    }""".replace(
                         "__CREDENTIALS_MODE__",
                         '"include"' if include_credentials else '"omit"',
                     ),
@@ -110,10 +137,9 @@ class BilibiliBrowserClient:
             return self._anonymous_context
 
         if self._browser is None:
+            sync_playwright, playwright_error_type = _load_playwright_runtime()
             self._playwright = sync_playwright().start()
-            self._browser = self._playwright.chromium.launch(
-                **self._build_launch_kwargs()
-            )
+            self._browser = self._launch_browser(playwright_error_type)
 
         context = self._browser.new_context(
             user_agent=self.settings.bilibili_user_agent,
@@ -124,12 +150,42 @@ class BilibiliBrowserClient:
         if include_auth_cookies:
             context_cookies = build_bilibili_playwright_cookies(self.settings)
             if context_cookies:
-                context.add_cookies(context_cookies)
+                context.add_cookies(cast(Any, context_cookies))
             self._auth_context = context
         else:
             self._anonymous_context = context
 
         return context
+
+    def _launch_browser(self, playwright_error_type: type[Exception]) -> Browser:
+        if self._playwright is None:
+            raise RuntimeError("Playwright runtime has not been initialized.")
+
+        launch_kwargs = self._build_launch_kwargs()
+        try:
+            return self._playwright.chromium.launch(**launch_kwargs)
+        except playwright_error_type as exc:
+            if not self._is_missing_chromium_runtime_error(exc):
+                raise
+
+            self._install_chromium_runtime()
+            return self._playwright.chromium.launch(**launch_kwargs)
+
+    def _install_chromium_runtime(self) -> None:
+        logger = get_logger(__name__)
+        logger.info("Playwright Chromium runtime is missing, installing it on demand.")
+        subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            check=True,
+        )
+
+    @staticmethod
+    def _is_missing_chromium_runtime_error(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return (
+            "executable doesn't exist" in message
+            or "please run the following command" in message
+        )
 
     def _build_launch_kwargs(self) -> dict[str, Any]:
         launch_kwargs: dict[str, Any] = {

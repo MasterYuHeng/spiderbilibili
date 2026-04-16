@@ -183,7 +183,7 @@ import { ElMessage } from 'element-plus'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 
-import { getErrorMessage } from '@/api/client'
+import { getErrorMessage, isRequestCanceled } from '@/api/client'
 import {
   cancelTask,
   deleteTask,
@@ -215,6 +215,7 @@ const deleteDialogVisible = ref(false)
 const pendingDeleteTaskId = ref('')
 const pendingDeleteTaskKeyword = ref('')
 let timer: number | null = null
+let listController: AbortController | null = null
 
 const activeTaskCount = computed(
   () => (listPayload.value?.items ?? []).filter((item) => isActiveTaskStatus(item.status)).length,
@@ -240,14 +241,27 @@ const statusFilter = computed({
   },
 })
 
-async function fetchTasks() {
-  loading.value = true
+async function fetchTasks(options: { silent?: boolean } = {}) {
+  const controller = new AbortController()
+  listController?.abort()
+  listController = controller
+  if (!listPayload.value || !options.silent) {
+    loading.value = true
+  }
   try {
-    const payload = await listTasks({
-      page: workspaceStore.taskListPage,
-      page_size: workspaceStore.taskListPageSize,
-      status: workspaceStore.taskListStatus === 'all' ? undefined : workspaceStore.taskListStatus,
-    })
+    const payload = await listTasks(
+      {
+        page: workspaceStore.taskListPage,
+        page_size: workspaceStore.taskListPageSize,
+        status:
+          workspaceStore.taskListStatus === 'all' ? undefined : workspaceStore.taskListStatus,
+      },
+      controller.signal,
+    )
+
+    if (listController !== controller) {
+      return
+    }
 
     if (payload.total_pages > 0 && workspaceStore.taskListPage > payload.total_pages) {
       workspaceStore.setTaskListPage(payload.total_pages)
@@ -256,10 +270,42 @@ async function fetchTasks() {
 
     listPayload.value = payload
   } catch (error) {
+    if (isRequestCanceled(error)) {
+      return
+    }
     ElMessage.error(getErrorMessage(error, '加载任务列表失败。'))
   } finally {
-    loading.value = false
-    syncAutoRefresh()
+    if (listController === controller) {
+      listController = null
+      loading.value = false
+      syncAutoRefresh()
+    }
+  }
+}
+
+async function runTaskAction(
+  taskId: string,
+  action: () => Promise<unknown>,
+  options: {
+    successMessage: string
+    errorMessage: string
+    refreshMode?: 'silent' | 'normal'
+    afterSuccess?: () => Promise<void>
+  },
+) {
+  actingTaskId.value = taskId
+  try {
+    await action()
+    ElMessage.success(options.successMessage)
+    await fetchTasks({ silent: options.refreshMode !== 'normal' })
+    if (options.afterSuccess) {
+      await options.afterSuccess()
+    }
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, options.errorMessage))
+    await fetchTasks({ silent: options.refreshMode !== 'normal' })
+  } finally {
+    actingTaskId.value = ''
   }
 }
 
@@ -281,7 +327,7 @@ function syncAutoRefresh() {
   }
 
   timer = window.setInterval(() => {
-    void fetchTasks()
+    void fetchTasks({ silent: true })
   }, 10000)
 }
 
@@ -315,85 +361,58 @@ async function openTask(
   tab: 'detail' | 'videos' | 'topics' | 'report' | 'acceptance' = 'detail',
 ) {
   workspaceStore.setCurrentTaskContext(taskId, keyword)
-  if (tab === 'videos') {
-    await router.push(`/tasks/${taskId}/videos`)
-    return
+  const routeByTab = {
+    detail: `/tasks/${taskId}`,
+    videos: `/tasks/${taskId}/videos`,
+    topics: `/tasks/${taskId}/topics`,
+    report: `/tasks/${taskId}/report`,
+    acceptance: `/tasks/${taskId}/acceptance`,
   }
-
-  if (tab === 'topics') {
-    await router.push(`/tasks/${taskId}/topics`)
-    return
-  }
-
-  if (tab === 'report') {
-    await router.push(`/tasks/${taskId}/report`)
-    return
-  }
-
-  if (tab === 'acceptance') {
-    await router.push(`/tasks/${taskId}/acceptance`)
-    return
-  }
-
-  await router.push(`/tasks/${taskId}`)
+  await router.push(routeByTab[tab])
 }
 
 async function handleRetry(taskId: string) {
-  actingTaskId.value = taskId
-  try {
-    const payload = await retryTask(taskId)
-    workspaceStore.setCurrentTaskContext(payload.task.id, payload.task.keyword)
-    ElMessage.success('已创建重试任务。')
-    await fetchTasks()
-    await router.push(`/tasks/${payload.task.id}`)
-  } catch (error) {
-    ElMessage.error(getErrorMessage(error, '重试任务失败。'))
-    await fetchTasks()
-  } finally {
-    actingTaskId.value = ''
-  }
+  let createdTaskId = ''
+
+  await runTaskAction(
+    taskId,
+    async () => {
+      const payload = await retryTask(taskId)
+      createdTaskId = payload.task.id
+      workspaceStore.setCurrentTaskContext(createdTaskId, payload.task.keyword)
+    },
+    {
+      successMessage: '已创建重试任务。',
+      errorMessage: '重试任务失败。',
+      afterSuccess: async () => {
+        if (createdTaskId) {
+          await router.push(`/tasks/${createdTaskId}`)
+        }
+      },
+    },
+  )
 }
 
 async function handlePause(taskId: string) {
-  actingTaskId.value = taskId
-  try {
-    await pauseTask(taskId)
-    ElMessage.success('任务已暂停。')
-    await fetchTasks()
-  } catch (error) {
-    ElMessage.error(getErrorMessage(error, '暂停任务失败。'))
-    await fetchTasks()
-  } finally {
-    actingTaskId.value = ''
-  }
+  await runTaskAction(taskId, () => pauseTask(taskId), {
+    successMessage: '任务已暂停。',
+    errorMessage: '暂停任务失败。',
+  })
 }
 
 async function handleResume(taskId: string) {
-  actingTaskId.value = taskId
-  try {
-    await resumeTask(taskId)
-    ElMessage.success('任务已恢复执行。')
-    await fetchTasks()
-  } catch (error) {
-    ElMessage.error(getErrorMessage(error, '恢复任务失败。'))
-    await fetchTasks()
-  } finally {
-    actingTaskId.value = ''
-  }
+  await runTaskAction(taskId, () => resumeTask(taskId), {
+    successMessage: '任务已恢复执行。',
+    errorMessage: '恢复任务失败。',
+  })
 }
 
 async function handleCancel(taskId: string) {
-  actingTaskId.value = taskId
-  try {
-    await cancelTask(taskId)
-    ElMessage.success('任务已取消。')
-    await fetchTasks()
-  } catch (error) {
-    ElMessage.error(getErrorMessage(error, '取消任务失败。'))
-    await fetchTasks()
-  } finally {
-    actingTaskId.value = ''
-  }
+  await runTaskAction(taskId, () => cancelTask(taskId), {
+    successMessage: '任务已取消。',
+    errorMessage: '取消任务失败。',
+    refreshMode: 'normal',
+  })
 }
 
 async function confirmDeleteTask() {
@@ -412,11 +431,11 @@ async function confirmDeleteTask() {
     if ((listPayload.value?.items.length ?? 0) === 1 && workspaceStore.taskListPage > 1) {
       workspaceStore.setTaskListPage(workspaceStore.taskListPage - 1)
     } else {
-      await fetchTasks()
+      await fetchTasks({ silent: true })
     }
   } catch (error) {
     ElMessage.error(getErrorMessage(error, '移入回收站失败。'))
-    await fetchTasks()
+    await fetchTasks({ silent: true })
   } finally {
     actingTaskId.value = ''
     closeDeleteDialog()
@@ -440,6 +459,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   clearTimer()
+  listController?.abort()
+  listController = null
 })
 </script>
 

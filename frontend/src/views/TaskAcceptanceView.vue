@@ -244,10 +244,12 @@ async function fetchTaskProgress() {
   }
 }
 
-async function fetchAcceptance() {
+async function fetchAcceptance(options: { silent?: boolean } = {}) {
   const controller = replaceController(acceptanceController)
   acceptanceController = controller
-  loading.value = true
+  if (!acceptance.value || !options.silent) {
+    loading.value = true
+  }
   try {
     const response = await getTaskAcceptance(taskId.value, { signal: controller.signal })
     if (acceptanceController !== controller) {
@@ -284,7 +286,7 @@ async function pollTaskAcceptance() {
       currentStatus !== previousStatus ||
       (currentProgress === 100 && previousProgress !== 100)
     ) {
-      await fetchAcceptance()
+      await fetchAcceptance({ silent: true })
     }
   } catch (error) {
     if (!isRequestCanceled(error)) {
@@ -302,6 +304,7 @@ async function refreshAll() {
 }
 
 watch(taskId, async () => {
+  clearTimer()
   abortPendingRequests()
   acceptance.value = null
   taskProgress.value = null

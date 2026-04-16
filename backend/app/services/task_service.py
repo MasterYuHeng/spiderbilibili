@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from math import ceil
 from typing import Any
@@ -222,7 +222,9 @@ def list_crawl_tasks(
 
     if not deleted_only:
         active_task_ids = [
-            task.id for task in tasks if task.status in {TaskStatus.QUEUED, TaskStatus.RUNNING}
+            task.id
+            for task in tasks
+            if task.status in {TaskStatus.QUEUED, TaskStatus.RUNNING}
         ]
         if active_task_ids:
             reconcile_task_list_runtime_states(
@@ -321,7 +323,9 @@ def get_task_progress(session: Session, task_id: str) -> TaskProgressPayload:
 
 
 def get_task_or_raise(session: Session, task_id: str) -> CrawlTask:
-    statement = select(CrawlTask).where(CrawlTask.id == task_id, CrawlTask.deleted_at.is_(None))
+    statement = select(CrawlTask).where(
+        CrawlTask.id == task_id, CrawlTask.deleted_at.is_(None)
+    )
     task = session.scalar(statement)
     if task is None:
         raise NotFoundError(
@@ -438,9 +442,7 @@ def resolve_task_create_payload(
     partition_tid = payload.partition_tid if search_scope == "partition" else None
     partition_name = payload.partition_name if search_scope == "partition" else None
     published_within_days = payload.published_within_days
-    enable_keyword_synonym_expansion = bool(
-        payload.enable_keyword_synonym_expansion
-    )
+    enable_keyword_synonym_expansion = bool(payload.enable_keyword_synonym_expansion)
     keyword_synonym_count = (
         int(payload.keyword_synonym_count)
         if payload.keyword_synonym_count is not None
@@ -1048,7 +1050,13 @@ def _has_ready_analysis_snapshot(task: CrawlTask) -> bool:
     if snapshot is None:
         return False
 
-    required_snapshot_keys = {"generated_at", "summary", "topics", "advanced", "top_videos"}
+    required_snapshot_keys = {
+        "generated_at",
+        "summary",
+        "topics",
+        "advanced",
+        "top_videos",
+    }
     if not required_snapshot_keys.issubset(snapshot):
         return False
 
@@ -1574,7 +1582,9 @@ def resolve_task_search_keywords_used(
         return []
 
     crawl_stats = _get_nested_dict(extra_params, "crawl_stats")
-    search_keywords_used = _normalize_keyword_list(crawl_stats.get("search_keywords_used"))
+    search_keywords_used = _normalize_keyword_list(
+        crawl_stats.get("search_keywords_used")
+    )
     if search_keywords_used:
         return search_keywords_used
 
@@ -1594,7 +1604,9 @@ def resolve_task_expanded_keyword_count(
 ) -> int:
     extra_params = _get_task_extra_params(task)
     crawl_stats = _get_nested_dict(extra_params, "crawl_stats")
-    expanded_keyword_count = _coerce_optional_int(crawl_stats.get("expanded_keyword_count"))
+    expanded_keyword_count = _coerce_optional_int(
+        crawl_stats.get("expanded_keyword_count")
+    )
     if expanded_keyword_count is not None and expanded_keyword_count >= 0:
         return expanded_keyword_count
 

@@ -220,7 +220,9 @@ def build_metric_weight_storage_payload(
     return storage
 
 
-def get_effective_metric_weights(metric_key: str, raw_weights: dict[str, float]) -> dict[str, float]:
+def get_effective_metric_weights(
+    metric_key: str, raw_weights: dict[str, float]
+) -> dict[str, float]:
     spec = METRIC_SPEC_BY_KEY[metric_key]
     positive_values = {
         component.key: max(float(raw_weights.get(component.key, 0.0)), 0.0)
@@ -244,7 +246,8 @@ def calculate_metric_score(
 ) -> float:
     effective_weights = get_effective_metric_weights(metric_key, raw_weights)
     return sum(
-        effective_weights[component.key] * float(component_values.get(component.key) or 0.0)
+        effective_weights[component.key]
+        * float(component_values.get(component.key) or 0.0)
         for component in METRIC_SPEC_BY_KEY[metric_key].components
     )
 
@@ -287,7 +290,11 @@ def build_metric_weight_configs(
                 normalization_note=spec.normalization_note,
                 formula=_build_formula(spec, effective_weights),
                 customized=any(
-                    abs(raw_weights.get(component.key, 0.0) - spec.default_weights[component.key]) > 1e-9
+                    abs(
+                        raw_weights.get(component.key, 0.0)
+                        - spec.default_weights[component.key]
+                    )
+                    > 1e-9
                     for component in spec.components
                 ),
                 components=[

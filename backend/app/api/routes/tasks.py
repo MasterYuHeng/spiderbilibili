@@ -25,8 +25,8 @@ from app.schemas.task import (
     TaskTopicListPayload,
     TaskVideoListPayload,
 )
-from app.services.task_analysis_service import update_task_analysis_weights
 from app.services.task_acceptance_service import TaskAcceptanceService
+from app.services.task_analysis_service import update_task_analysis_weights
 from app.services.task_export_service import TaskExportService
 from app.services.task_report_service import TaskReportService
 from app.services.task_result_service import (
@@ -44,8 +44,8 @@ from app.services.task_service import (
     get_task_detail_with_logs,
     get_task_progress,
     list_crawl_tasks,
-    permanently_delete_crawl_task,
     pause_crawl_task,
+    permanently_delete_crawl_task,
     restore_crawl_task,
     resume_crawl_task,
     retry_crawl_task,
@@ -474,7 +474,10 @@ def get_task_analysis_endpoint(
 @router.post(
     "/{task_id}/analysis/weights",
     response_model=ApiResponse[TaskAnalysisPayload],
-    summary="Update task analysis metric weights and regenerate analysis/report snapshots",
+    summary=(
+        "Update task analysis metric weights and "
+        "regenerate analysis/report snapshots"
+    ),
 )
 def update_task_analysis_weights_endpoint(
     task_id: str,

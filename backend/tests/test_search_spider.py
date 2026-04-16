@@ -15,8 +15,8 @@ def test_parse_search_page_data_normalizes_video_candidates() -> None:
                 {
                     "bvid": "BV1test12345",
                     "aid": 123,
-                    "title": "这是一个<em class=\"keyword\">AI</em>视频",
-                    "description": "用于测试的<em class=\"keyword\">描述</em>",
+                    "title": '这是一个<em class="keyword">AI</em>视频',
+                    "description": '用于测试的<em class="keyword">描述</em>',
                     "author": "测试UP",
                     "mid": 999,
                     "arcurl": "https://www.bilibili.com/video/BV1test12345",

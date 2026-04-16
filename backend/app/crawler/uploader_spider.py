@@ -116,11 +116,15 @@ class BilibiliUploaderSpider:
         if not isinstance(raw_results, list):
             raise BilibiliParseError("Uploader page payload is missing list.vlist.")
 
-        resolved_page_size = int(page_info.get("ps") or page_size or len(raw_results) or 30)
+        resolved_page_size = int(
+            page_info.get("ps") or page_size or len(raw_results) or 30
+        )
         total_results = int(page_info.get("count") or len(raw_results))
         total_pages = int(page_info.get("count") or 0)
         if resolved_page_size > 0:
-            total_pages = max(1, (total_results + resolved_page_size - 1) // resolved_page_size)
+            total_pages = max(
+                1, (total_results + resolved_page_size - 1) // resolved_page_size
+            )
         else:
             total_pages = 1
 
@@ -159,11 +163,14 @@ class BilibiliUploaderSpider:
         description = strip_html_tags(
             str(payload.get("description") or payload.get("desc") or "")
         )
-        author_name = strip_html_tags(
-            str(payload.get("author") or payload.get("name") or "")
-        ) or None
+        author_name = (
+            strip_html_tags(str(payload.get("author") or payload.get("name") or ""))
+            or None
+        )
         cover_value = payload.get("pic") or payload.get("cover")
-        if isinstance(cover_value, str) and cover_value.startswith("http://i0.hdslb.com"):
+        if isinstance(cover_value, str) and cover_value.startswith(
+            "http://i0.hdslb.com"
+        ):
             cover_value = cover_value.replace("http://", "https://", 1)
 
         return SearchVideoCandidate(
@@ -189,7 +196,9 @@ class BilibiliUploaderSpider:
             favorite_count=parse_count_text(
                 payload.get("favorites") or payload.get("favorite")
             ),
-            comment_count=parse_count_text(payload.get("comment") or payload.get("review")),
+            comment_count=parse_count_text(
+                payload.get("comment") or payload.get("review")
+            ),
             danmaku_count=parse_count_text(
                 payload.get("video_review") or payload.get("danmaku")
             ),

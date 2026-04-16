@@ -1,0 +1,16 @@
+FROM mcr.microsoft.com/playwright/python:v1.58.0-noble
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /workspace/backend
+
+COPY backend/requirements.full.txt /tmp/requirements.full.txt
+COPY backend/requirements.runtime.txt /tmp/requirements.runtime.txt
+
+RUN pip install --upgrade pip \
+    && pip install -r /tmp/requirements.full.txt \
+    && rm -rf /root/.cache/pip
+
+CMD ["python", "-V"]
